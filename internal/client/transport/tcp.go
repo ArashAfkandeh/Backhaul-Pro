@@ -246,10 +246,13 @@ func (c *TcpTransport) poolMaintainer() {
 }
 
 func (c *TcpTransport) channelHandler() {
+	const maxRetries = 3
+	const baseBackoff = time.Second
 	msgChan := make(chan byte, 1000)
 
-	// Goroutine to handle the blocking ReceiveBinaryString
+	// Goroutine to handle the blocking ReceiveBinaryString with retry/backoff
 	go func() {
+		retries := 0
 		for {
 			select {
 			case <-c.ctx.Done():
@@ -257,12 +260,19 @@ func (c *TcpTransport) channelHandler() {
 			default:
 				msg, err := utils.ReceiveBinaryByte(c.controlChannel)
 				if err != nil {
-					if c.cancel != nil {
-						c.logger.Error("failed to read from control channel. ", err)
-						go c.Restart()
+					c.logger.Errorf("failed to read from control channel (try %d/%d): %v", retries+1, maxRetries, err)
+					retries++
+					if retries >= maxRetries {
+						if c.cancel != nil {
+							c.logger.Error("max retries reached, restarting...")
+							go c.Restart()
+						}
+						return
 					}
-					return
+					time.Sleep(baseBackoff * time.Duration(retries))
+					continue
 				}
+				retries = 0 // reset on success
 				msgChan <- msg
 			}
 		}

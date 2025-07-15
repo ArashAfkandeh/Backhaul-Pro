@@ -195,6 +195,8 @@ loop:
 }
 
 func (s *UdpTransport) channelHandler() {
+	const maxRetries = 3
+	const baseBackoff = time.Second
 	ticker := time.NewTicker(s.config.Heartbeat)
 	defer ticker.Stop()
 
@@ -202,6 +204,7 @@ func (s *UdpTransport) channelHandler() {
 	messageChan := make(chan byte, 1)
 
 	go func() {
+		retries := 0
 		for {
 			select {
 			case <-s.ctx.Done():
@@ -209,12 +212,19 @@ func (s *UdpTransport) channelHandler() {
 			default:
 				message, err := utils.ReceiveBinaryByte(s.controlChannel)
 				if err != nil {
-					if s.cancel != nil {
-						s.logger.Error("failed to read from channel connection. ", err)
-						go s.Restart()
+					s.logger.Errorf("failed to read from channel connection (try %d/%d): %v", retries+1, maxRetries, err)
+					retries++
+					if retries >= maxRetries {
+						if s.cancel != nil {
+							s.logger.Error("max retries reached, restarting...")
+							go s.Restart()
+						}
+						return
 					}
-					return
+					time.Sleep(baseBackoff * time.Duration(retries))
+					continue
 				}
+				retries = 0 // reset on success
 				messageChan <- message
 			}
 		}

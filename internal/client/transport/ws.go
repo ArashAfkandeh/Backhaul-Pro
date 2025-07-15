@@ -213,25 +213,37 @@ func (c *WsTransport) poolMaintainer() {
 }
 
 func (c *WsTransport) channelHandler() {
+	const maxRetries = 3
+	const baseBackoff = time.Second
 	msgChan := make(chan byte, 1000)
 
-	// Goroutine to handle the blocking ReceiveBinaryString
+	// Goroutine to handle the blocking ReceiveBinaryString with retry/backoff
 	go func() {
+		retries := 0
 		for {
 			select {
 			case <-c.ctx.Done():
 				return
-
 			default:
 				_, msg, err := c.controlChannel.ReadMessage()
 				if err != nil {
-					if c.cancel != nil {
-						c.logger.Error("failed to read from channel connection. ", err)
-						go c.Restart()
+					c.logger.Errorf("failed to read from channel connection (try %d/%d): %v", retries+1, maxRetries, err)
+					retries++
+					if retries >= maxRetries {
+						if c.cancel != nil {
+							c.logger.Error("max retries reached, restarting...")
+							go c.Restart()
+						}
+						return
 					}
-					return
+					time.Sleep(baseBackoff * time.Duration(retries))
+					continue
 				}
-
+				retries = 0 // reset on success
+				if len(msg) == 0 {
+					c.logger.Warn("received empty message from control channel")
+					continue
+				}
 				msgChan <- msg[0]
 			}
 		}

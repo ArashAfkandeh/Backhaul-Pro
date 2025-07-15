@@ -149,28 +149,40 @@ func (s *WsMuxTransport) Restart() {
 }
 
 func (s *WsMuxTransport) channelHandler() {
+	const maxRetries = 3
+	const baseBackoff = time.Second
 	ticker := time.NewTicker(s.config.Heartbeat)
 	defer ticker.Stop()
 
 	// Channel to receive the message or error
 	messageChan := make(chan byte, 10)
 
-	// Separate goroutine to continuously listen for messages
+	// Separate goroutine to continuously listen for messages with retry/backoff
 	go func() {
+		retries := 0
 		for {
 			select {
 			case <-s.ctx.Done():
 				return
-
 			default:
 				_, msg, err := s.controlChannel.ReadMessage()
-				// Exit if there's an error
 				if err != nil {
-					if s.cancel != nil {
-						s.logger.Error("failed to read from channel connection. ", err)
-						go s.Restart()
+					s.logger.Errorf("failed to read from channel connection (try %d/%d): %v", retries+1, maxRetries, err)
+					retries++
+					if retries >= maxRetries {
+						if s.cancel != nil {
+							s.logger.Error("max retries reached, restarting...")
+							go s.Restart()
+						}
+						return
 					}
-					return
+					time.Sleep(baseBackoff * time.Duration(retries))
+					continue
+				}
+				retries = 0 // reset on success
+				if len(msg) == 0 {
+					s.logger.Warn("received empty message from control channel")
+					continue
 				}
 				messageChan <- msg[0]
 			}

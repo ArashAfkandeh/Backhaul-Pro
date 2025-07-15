@@ -3,6 +3,8 @@ package cmd
 import (
 	"github.com/musix/backhaul/internal/config"
 
+	"os"
+
 	"github.com/sirupsen/logrus"
 )
 
@@ -110,6 +112,16 @@ func applyDefaults(cfg *config.Config) {
 	if cfg.Client.SnifferLog == "" {
 		cfg.Client.SnifferLog = defaultSnifferLog
 	}
+	// Sniffer default: true unless explicitly set to false (for client)
+	if cfg.Client.Sniffer == nil {
+		t := true
+		cfg.Client.Sniffer = &t
+	}
+	// Sniffer default: true unless explicitly set to false (for server)
+	if cfg.Server.Sniffer == nil {
+		t := true
+		cfg.Server.Sniffer = &t
+	}
 	// Heartbeat
 	if cfg.Server.Heartbeat < 1 { // Minimum accepted interval is 1 second
 		cfg.Server.Heartbeat = deafultHeartbeat
@@ -123,5 +135,20 @@ func applyDefaults(cfg *config.Config) {
 	// Mux concurrancy
 	if cfg.Server.MuxCon < 1 {
 		cfg.Server.MuxCon = defaultMuxCon
+	}
+
+	// TLS cert/key default
+	if cfg.Server.TLSCertFile == "" || cfg.Server.TLSKeyFile == "" {
+		basedir, err := os.Getwd()
+		if err != nil {
+			basedir = "."
+		}
+		sslDir := basedir + "/ssl"
+		if cfg.Server.TLSCertFile == "" {
+			cfg.Server.TLSCertFile = sslDir + "/server.crt"
+		}
+		if cfg.Server.TLSKeyFile == "" {
+			cfg.Server.TLSKeyFile = sslDir + "/server.key"
+		}
 	}
 }

@@ -46,6 +46,11 @@ func (c *Client) Start() {
 
 	c.logger.Infof("client with remote address %s started successfully", c.config.RemoteAddr)
 
+	sniffer := true
+	if c.config.Sniffer != nil {
+		sniffer = *c.config.Sniffer
+	}
+
 	if c.config.Transport == config.TCP {
 		tcpConfig := &transport.TcpConfig{
 			RemoteAddr:     c.config.RemoteAddr,
@@ -55,7 +60,7 @@ func (c *Client) Start() {
 			DialTimeOut:    time.Duration(c.config.DialTimeout) * time.Second,
 			ConnPoolSize:   c.config.ConnectionPool,
 			Token:          c.config.Token,
-			Sniffer:        c.config.Sniffer,
+			Sniffer:        sniffer,
 			WebPort:        c.config.WebPort,
 			SnifferLog:     c.config.SnifferLog,
 			AggressivePool: c.config.AggressivePool,
@@ -76,7 +81,7 @@ func (c *Client) Start() {
 			MaxFrameSize:     c.config.MaxFrameSize,
 			MaxReceiveBuffer: c.config.MaxReceiveBuffer,
 			MaxStreamBuffer:  c.config.MaxStreamBuffer,
-			Sniffer:          c.config.Sniffer,
+			Sniffer:          sniffer,
 			WebPort:          c.config.WebPort,
 			SnifferLog:       c.config.SnifferLog,
 			AggressivePool:   c.config.AggressivePool,
@@ -93,7 +98,7 @@ func (c *Client) Start() {
 			DialTimeOut:    time.Duration(c.config.DialTimeout) * time.Second,
 			ConnPoolSize:   c.config.ConnectionPool,
 			Token:          c.config.Token,
-			Sniffer:        c.config.Sniffer,
+			Sniffer:        sniffer,
 			WebPort:        c.config.WebPort,
 			SnifferLog:     c.config.SnifferLog,
 			Mode:           c.config.Transport,
@@ -116,7 +121,7 @@ func (c *Client) Start() {
 			MaxFrameSize:     c.config.MaxFrameSize,
 			MaxReceiveBuffer: c.config.MaxReceiveBuffer,
 			MaxStreamBuffer:  c.config.MaxStreamBuffer,
-			Sniffer:          c.config.Sniffer,
+			Sniffer:          sniffer,
 			WebPort:          c.config.WebPort,
 			SnifferLog:       c.config.SnifferLog,
 			Mode:             c.config.Transport,
@@ -135,7 +140,7 @@ func (c *Client) Start() {
 			DialTimeOut:    time.Duration(c.config.DialTimeout) * time.Second,
 			ConnectionPool: c.config.ConnectionPool,
 			Token:          c.config.Token,
-			Sniffer:        c.config.Sniffer,
+			Sniffer:        sniffer,
 			WebPort:        c.config.WebPort,
 			SnifferLog:     c.config.SnifferLog,
 			AggressivePool: c.config.AggressivePool,
@@ -150,7 +155,7 @@ func (c *Client) Start() {
 			DialTimeOut:    time.Duration(c.config.DialTimeout) * time.Second,
 			ConnPoolSize:   c.config.ConnectionPool,
 			Token:          c.config.Token,
-			Sniffer:        c.config.Sniffer,
+			Sniffer:        sniffer,
 			WebPort:        c.config.WebPort,
 			SnifferLog:     c.config.SnifferLog,
 			AggressivePool: c.config.AggressivePool,

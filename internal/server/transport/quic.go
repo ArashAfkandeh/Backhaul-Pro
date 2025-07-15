@@ -319,6 +319,15 @@ func (s *QuicTransport) TunnelListener() {
 	}
 	s.config.TunnelStatus = "Disconnected (QUIC)"
 
+	// Ensure self-signed cert exists
+	host, _, _ := net.SplitHostPort(s.config.BindAddr)
+	if host == "" {
+		host = "localhost"
+	}
+	if err := utils.EnsureSelfSignedCert(s.config.TLSCertFile, s.config.TLSKeyFile, host); err != nil {
+		s.logger.Fatalf("failed to generate self-signed certificate: %v", err)
+	}
+
 	// Create a UDP connection
 	udpAddr, err := net.ResolveUDPAddr("udp", s.config.BindAddr)
 	if err != nil {

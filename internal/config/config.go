@@ -29,7 +29,7 @@ type ServerConfig struct {
 	MaxFrameSize     int           `toml:"mux_framesize"`
 	MaxReceiveBuffer int           `toml:"mux_recievebuffer"`
 	MaxStreamBuffer  int           `toml:"mux_streambuffer"`
-	Sniffer          bool          `toml:"sniffer"`
+	Sniffer          *bool         `toml:"sniffer"` // pointer: default true if nil
 	WebPort          int           `toml:"web_port"`
 	SnifferLog       string        `toml:"sniffer_log"`
 	TLSCertFile      string        `toml:"tls_cert"`
@@ -55,7 +55,7 @@ type ClientConfig struct {
 	MaxFrameSize     int           `toml:"mux_framesize"`
 	MaxReceiveBuffer int           `toml:"mux_recievebuffer"`
 	MaxStreamBuffer  int           `toml:"mux_streambuffer"`
-	Sniffer          bool          `toml:"sniffer"`
+	Sniffer          *bool         `toml:"sniffer"`
 	WebPort          int           `toml:"web_port"`
 	SnifferLog       string        `toml:"sniffer_log"`
 	DialTimeout      int           `toml:"dial_timeout"`

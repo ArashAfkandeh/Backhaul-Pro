@@ -325,6 +325,14 @@ func (s *WsMuxTransport) tunnelListener() {
 		}()
 	} else {
 		go func() {
+			host, _, _ := net.SplitHostPort(addr)
+			if host == "" {
+				host = "localhost"
+			}
+			err := utils.EnsureSelfSignedCert(s.config.TLSCertFile, s.config.TLSKeyFile, host)
+			if err != nil {
+				s.logger.Fatalf("failed to generate self-signed certificate: %v", err)
+			}
 			s.logger.Infof("%s server starting, listening on %s", s.config.Mode, addr)
 			if s.controlChannel == nil {
 				s.logger.Infof("waiting for %s control channel connection", s.config.Mode)

@@ -19,7 +19,7 @@ import (
 var (
 	logger       = utils.NewLogger("info")
 	configPath   *string
-	autoTune     *bool
+	noAutoTune   *bool
 	tuneInterval *time.Duration
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -34,7 +34,7 @@ const version = "v0.6.6"
 
 func main() {
 	configPath = flag.String("c", "", "path to the configuration file (TOML format)")
-	autoTune = flag.Bool("auto-tune", false, "enable automatic performance tuning")
+	noAutoTune = flag.Bool("no-auto-tune", false, "disable automatic performance tuning")
 	tuneInterval = flag.Duration("tune-interval", 15*time.Second, "interval for automatic tuning")
 	showVersion := flag.Bool("v", false, "print the version and exit")
 	flag.Parse()
@@ -65,7 +65,7 @@ func main() {
 
 	// Start the main application logic
 	logger.Info("Starting Backhaul application...")
-	
+
 	// Run the application in a separate goroutine
 	wg.Add(1)
 	go func() {
@@ -75,16 +75,18 @@ func main() {
 				logger.Errorf("Application panic: %v", r)
 			}
 		}()
-		
+
 		cfg := cmd.Run(*configPath, ctx)
-		
-		// Start the dynamic tuner if enabled
-		if *autoTune {
+
+		// Start the dynamic tuner unless --no-auto-tune is set
+		if !*noAutoTune {
 			mu.Lock()
 			tuner = tuning.NewTuner(cfg, utils.NewLogger(cfg.Server.LogLevel))
 			tuner.Start(*tuneInterval)
 			mu.Unlock()
 			logger.Info("Auto-tuning enabled")
+		} else {
+			logger.Info("Auto-tuning disabled by flag")
 		}
 	}()
 
@@ -121,7 +123,7 @@ func handleShutdown(sigChan chan os.Signal) {
 	}()
 
 	// Stop tuner if running
-	if *autoTune {
+	if noAutoTune != nil && !*noAutoTune {
 		mu.RLock()
 		if tuner != nil {
 			logger.Info("Stopping auto-tuner...")
@@ -152,9 +154,9 @@ func handleShutdown(sigChan chan os.Signal) {
 
 func forceShutdown() {
 	logger.Error("Force shutdown initiated!")
-	
+
 	// Stop tuner immediately
-	if *autoTune {
+	if noAutoTune != nil && !*noAutoTune {
 		mu.RLock()
 		if tuner != nil {
 			tuner.Stop()
@@ -201,9 +203,9 @@ func hotReload() {
 			// If the modification time has changed, reload the app
 			if modTime.After(lastModTime) {
 				logger.Info("Config file changed, reloading application...")
-				
+
 				// Stop tuner before reloading
-				if *autoTune {
+				if noAutoTune != nil && !*noAutoTune {
 					mu.Lock()
 					if tuner != nil {
 						tuner.Stop()
@@ -214,7 +216,7 @@ func hotReload() {
 
 				// Cancel the previous context to stop the old running instance
 				cancel()
-				
+
 				// Wait a bit for graceful shutdown
 				time.Sleep(3 * time.Second)
 
@@ -230,7 +232,7 @@ func hotReload() {
 					cfg := cmd.Run(*configPath, ctx)
 
 					// Restart tuner if needed
-					if *autoTune {
+					if noAutoTune != nil && !*noAutoTune {
 						mu.Lock()
 						tuner = tuning.NewTuner(cfg, utils.NewLogger(cfg.Server.LogLevel))
 						tuner.Start(*tuneInterval)

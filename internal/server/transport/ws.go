@@ -127,6 +127,8 @@ func (s *WsTransport) Restart() {
 func (s *WsTransport) channelHandler() {
 	const maxRetries = 3
 	const baseBackoff = time.Second
+	ticker := time.NewTicker(s.config.Heartbeat)
+	defer ticker.Stop()
 	messageChan := make(chan byte, 10)
 
 	// Separate goroutine to continuously listen for messages with retry/backoff
@@ -297,6 +299,14 @@ func (s *WsTransport) tunnelListener() {
 		}()
 	} else {
 		go func() {
+			host, _, _ := net.SplitHostPort(addr)
+			if host == "" {
+				host = "localhost"
+			}
+			err := utils.EnsureSelfSignedCert(s.config.TLSCertFile, s.config.TLSKeyFile, host)
+			if err != nil {
+				s.logger.Fatalf("failed to generate self-signed certificate: %v", err)
+			}
 			s.logger.Infof("wss server starting, listening on %s", addr)
 			if s.controlChannel == nil {
 				s.logger.Info("waiting for wss control channel connection")

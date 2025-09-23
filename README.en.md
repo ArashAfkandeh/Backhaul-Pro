@@ -137,6 +137,15 @@ sudo bash installer.sh
 bash <(curl -fsSL https://raw.githubusercontent.com/ArashAfkandeh/Backhaul-Pro/main/installer.sh)
 ```
 
+- Run directly with arguments (no file saved):
+```bash
+# Uninstall all or selected services via interactive menu
+bash <(curl -fsSL https://raw.githubusercontent.com/ArashAfkandeh/Backhaul-Pro/main/installer.sh) uninstall
+
+# Open central management menu (status/logs/restart/edit/uninstall)
+bash <(curl -fsSL https://raw.githubusercontent.com/ArashAfkandeh/Backhaul-Pro/main/installer.sh) manage
+```
+
 - Modes:
   - Online: installs dependencies via apt, downloads binary package, extracts to `/root/backhaul_pro`
   - Offline: installs from local archive `/root/backhaul_pro.tar.gz` and local apt repo

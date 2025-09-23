@@ -138,11 +138,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ArashAfkandeh/Backhaul-Pro/m
 ```
 
 - Run directly with arguments (no file saved):
-```bash
 # Uninstall all or selected services via interactive menu
+```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/ArashAfkandeh/Backhaul-Pro/main/installer.sh) uninstall
+```
 
 # Open central management menu (status/logs/restart/edit/uninstall)
+```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/ArashAfkandeh/Backhaul-Pro/main/installer.sh) manage
 ```
 
@@ -399,5 +401,6 @@ The script detects `backhaul_pro*.service` and `utunnel*.service`. If no configs
 - `mux_session`, `mux_version`: SMUX parameters with safe defaults
 - Sniffer: sorted JSON storage of per-port usage with human-readable formatting (KB/MB/GB)
 - Colored Logger: level set via `log_level`
+
 
 

@@ -131,11 +131,13 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ArashAfkandeh/Backhaul-Pro/m
 ```
 
 - اجرای مستقیم با آرگومان‌ها (بدون ذخیره فایل):
-```bash
 # Uninstall all or selected services via interactive menu
+```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/ArashAfkandeh/Backhaul-Pro/main/installer.sh) uninstall
+```
 
 # Open central management menu (status/logs/restart/edit/uninstall)
+```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/ArashAfkandeh/Backhaul-Pro/main/installer.sh) manage
 ```
 

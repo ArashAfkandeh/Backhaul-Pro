@@ -228,7 +228,6 @@ bind_addr = "0.0.0.0:443"
 transport = "wssmux"
 token = "YOUR_TOKEN"
 web_port = 2060
-log_level = "info"
 
 # Port mappings
 ports = [
@@ -249,7 +248,6 @@ remote_addr = "SERVER_IP:443"
 transport = "wssmux"
 token = "YOUR_TOKEN"
 web_port = 2061
-log_level = "info"
 
 # Optional for CDN scenarios in WS/WSS
 edge_ip = ""
@@ -401,3 +399,4 @@ The script detects `backhaul_pro*.service` and `utunnel*.service`. If no configs
 - `mux_session`, `mux_version`: SMUX parameters with safe defaults
 - Sniffer: sorted JSON storage of per-port usage with human-readable formatting (KB/MB/GB)
 - Colored Logger: level set via `log_level`
+

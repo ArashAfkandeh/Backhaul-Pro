@@ -130,6 +130,15 @@ sudo bash installer.sh
 bash <(curl -fsSL https://raw.githubusercontent.com/ArashAfkandeh/Backhaul-Pro/main/installer.sh)
 ```
 
+- اجرای مستقیم با آرگومان‌ها (بدون ذخیره فایل):
+```bash
+# Uninstall all or selected services via interactive menu
+bash <(curl -fsSL https://raw.githubusercontent.com/ArashAfkandeh/Backhaul-Pro/main/installer.sh) uninstall
+
+# Open central management menu (status/logs/restart/edit/uninstall)
+bash <(curl -fsSL https://raw.githubusercontent.com/ArashAfkandeh/Backhaul-Pro/main/installer.sh) manage
+```
+
 - حالت نصب:
   - Online: نصب وابستگی‌ها با apt، دانلود بسته باینری و استخراج به `/root/backhaul_pro`
   - Offline: نصب از آرشیو محلی `/root/backhaul_pro.tar.gz` و مخزن آفلاین بسته‌ها

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Backhaul Panel</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css" />
+  <style>
+    body {
+      background: linear-gradient(135deg, #0d1b2a, #1b263b);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      margin: 0;
+      padding: 0;
+    }
+    .glass-effect {
+      background: rgba(27, 38, 59, 0.7);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(167, 139, 250, 0.3);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+    .neon-hover {
+      transition: all 0.3s ease;
+    }
+    .neon-hover:hover {
+      box-shadow: 0 0 15px rgba(167, 139, 250, 0.7);
+      transform: translateY(-2px);
+    }
+    .main-title {
+      background: linear-gradient(90deg, #a5b4fc, #06b6d4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      text-fill-color: transparent;
+    }
+    .table-header {
+      background: rgba(167, 139, 250, 0.15);
+    }
+    .footer {
+      background: rgba(27, 38, 59, 0.95);
+      color: #a5b4fc;
+      font-size: 1rem;
+      letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body class="flex items-center justify-center min-h-screen">
+  <div class="glass-effect rounded-2xl shadow-2xl p-8 w-full max-w-3xl neon-hover mt-8 mb-8">
+    <div class="flex justify-between items-center mb-6">
+      <h1 class="text-3xl font-extrabold main-title tracking-wide">Backhaul System Panel</h1>
+      <button id="dark-mode-button" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded neon-hover">
+        <i class="fas fa-moon"></i>
+      </button>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+      <div class="bg-gray-900/60 rounded-xl p-6 shadow-lg">
+        <h2 class="text-xl font-semibold text-cyan-400 mb-4">Configuration</h2>
+        <table id="config-table" class="w-full rounded-lg overflow-hidden text-sm">
+          <thead class="table-header">
+            <tr>
+              <th class="px-4 py-2 text-left">Key</th>
+              <th class="px-4 py-2 text-left">Value</th>
+            </tr>
+          </thead>
+          <tbody class="bg-gray-800/60 text-gray-200">
+            <tr>
+              <td colspan="2" class="px-4 py-2 text-center">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="bg-gray-900/60 rounded-xl p-6 shadow-lg">
+        <h2 class="text-xl font-semibold text-cyan-400 mb-4">System Stats</h2>
+        <div class="space-y-2 text-gray-200">
+          <div class="flex items-center"><i class="fas fa-link mr-2 text-cyan-400"></i><span class="font-semibold">Tunnel Status:</span>&nbsp;<span id="tunnel-status">Loading...</span></div>
+          <div class="flex items-center"><i class="fas fa-microchip mr-2 text-cyan-400"></i><span class="font-semibold">CPU Usage:</span>&nbsp;<span id="cpu-usage">Loading...</span></div>
+          <div class="flex items-center"><i class="fas fa-memory mr-2 text-cyan-400"></i><span class="font-semibold">RAM Usage:</span>&nbsp;<span id="ram-usage">Loading...</span></div>
+          <div class="flex items-center"><i class="fas fa-hdd mr-2 text-cyan-400"></i><span class="font-semibold">Disk Usage:</span>&nbsp;<span id="disk-usage">Loading...</span></div>
+          <div class="flex items-center"><i class="fas fa-exchange-alt mr-2 text-cyan-400"></i><span class="font-semibold">Swap Usage:</span>&nbsp;<span id="swap-usage">Loading...</span></div>
+          <div class="flex items-center"><i class="fas fa-network-wired mr-2 text-cyan-400"></i><span class="font-semibold">Network Traffic:</span>&nbsp;<span id="network-traffic">Loading...</span></div>
+          <div class="flex items-center"><i class="fas fa-route mr-2 text-cyan-400"></i><span class="font-semibold">Backhaul Traffic:</span>&nbsp;<span id="backhaul-traffic">Loading...</span></div>
+          <div class="flex items-center"><i class="fas fa-download mr-2 text-cyan-400"></i><span class="font-semibold">Download Speed:</span>&nbsp;<span id="download-speed">Loading...</span></div>
+          <div class="flex items-center"><i class="fas fa-upload mr-2 text-cyan-400"></i><span class="font-semibold">Upload Speed:</span>&nbsp;<span id="upload-speed">Loading...</span></div>
+          <div class="flex items-center"><i class="fas fa-project-diagram mr-2 text-cyan-400"></i><span class="font-semibold">All Connections:</span>&nbsp;<span id="all-connections">Loading...</span></div>
+          <div class="flex items-center"><i class="fas fa-eye mr-2 text-cyan-400"></i><span class="font-semibold">Sniffer:</span>&nbsp;<span id="sniffer">Loading...</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="bg-gray-900/60 rounded-xl p-6 shadow-lg mb-8">
+      <h2 class="text-xl font-semibold text-cyan-400 mb-4">Port Usage</h2>
+      <table id="port-usage-table" class="w-full rounded-lg overflow-hidden text-sm">
+        <thead class="table-header">
+          <tr>
+            <th class="px-4 py-2 text-left">Port</th>
+            <th class="px-4 py-2 text-left">Usage</th>
+          </tr>
+        </thead>
+        <tbody class="bg-gray-800/60 text-gray-200">
+          <tr>
+            <td colspan="2" class="px-4 py-2 text-center">Loading...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <footer class="footer rounded-b-2xl text-center py-3 mt-4">
+      &copy; 2024 Backhaul Project
+    </footer>
+  </div>
+  <script>
+    async function fetchData() {
+      try {
+        const response = await fetch('/data');
+        if (!response.ok) throw new Error('Network response was not ok');
+        const data = await response.json();
+        const tableBody = document.querySelector('#port-usage-table tbody');
+        tableBody.innerHTML = '';
+        if (data.length === 0) {
+          tableBody.innerHTML = '<tr><td colspan="2" class="px-4 py-2 text-center">No data available</td></tr>';
+        } else {
+          data.forEach(item => {
+            const row = document.createElement('tr');
+            row.innerHTML = `<td class="px-4 py-2">${item.Port}</td><td class="px-4 py-2">${item.ReadableUsage}</td>`;
+            tableBody.appendChild(row);
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching data:', error);
+        const tableBody = document.querySelector('#port-usage-table tbody');
+        tableBody.innerHTML = '<tr><td colspan="2" class="px-4 py-2 text-center">Error loading data</td></tr>';
+      }
+    }
+    async function fetchSystemStats() {
+      try {
+        const response = await fetch('/stats');
+        if (!response.ok) throw new Error('Network response was not ok');
+        const stats = await response.json();
+        document.getElementById('tunnel-status').textContent = stats.tunnelStatus;
+        document.getElementById('cpu-usage').textContent = stats.cpuUsage;
+        document.getElementById('ram-usage').textContent = stats.ramUsage;
+        document.getElementById('disk-usage').textContent = stats.diskUsage;
+        document.getElementById('swap-usage').textContent = stats.swapUsage;
+        document.getElementById('network-traffic').textContent = stats.networkTraffic;
+        document.getElementById('download-speed').textContent = stats.downloadSpeed;
+        document.getElementById('upload-speed').textContent = stats.uploadSpeed;
+        document.getElementById('backhaul-traffic').textContent = stats.backhaulTraffic;
+        document.getElementById('sniffer').textContent = stats.sniffer;
+        document.getElementById('all-connections').textContent = stats.allConnections;
+      } catch (error) {
+        console.error('Error fetching system stats:', error);
+        document.querySelector('.space-y-4').innerHTML = '<div>Error loading stats</div>';
+      }
+    }
+    async function fetchConfig() {
+      try {
+        let response = await fetch('/config?type=client');
+        let config = null;
+        if (response.ok) {
+          config = await response.json();
+          if (!config || Object.keys(config).length === 0) {
+            response = await fetch('/config');
+            if (response.ok) {
+              config = await response.json();
+            } else {
+              throw new Error('Failed to fetch config');
+            }
+          }
+        } else {
+          response = await fetch('/config');
+          if (response.ok) {
+            config = await response.json();
+          } else {
+            throw new Error('Failed to fetch config');
+          }
+        }
+        const tableBody = document.querySelector('#config-table tbody');
+        tableBody.innerHTML = '';
+        Object.entries(config).forEach(([key, value]) => {
+          let displayValue = value;
+          if (Array.isArray(value)) displayValue = value.join(', ');
+          if (value === null) displayValue = '';
+          tableBody.innerHTML += `<tr><td class="px-4 py-2">${key}</td><td class="px-4 py-2">${displayValue}</td></tr>`;
+        });
+      } catch (error) {
+        console.error('Error fetching config:', error);
+        const tableBody = document.querySelector('#config-table tbody');
+        tableBody.innerHTML = '<tr><td colspan="2" class="px-4 py-2 text-center">Error loading config</td></tr>';
+      }
+    }
+    setInterval(() => {
+      fetchData();
+      fetchSystemStats();
+      fetchConfig();
+    }, 3000);
+    fetchData();
+    fetchSystemStats();
+    fetchConfig();
+    const darkModeButton = document.getElementById('dark-mode-button');
+    darkModeButton.addEventListener('click', () => {
+      const html = document.documentElement;
+      html.classList.toggle('dark');
+      if (darkModeButton.innerHTML.includes('fa-moon')) {
+        darkModeButton.innerHTML = '<i class="fas fa-sun"></i>';
+      } else {
+        darkModeButton.innerHTML = '<i class="fas fa-moon"></i>';
+      }
+    });
+  </script>
+</body>
+</html>

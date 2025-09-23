@@ -219,8 +219,6 @@ bind_addr = "0.0.0.0:443"
 transport = "wssmux"
 token = "YOUR_TOKEN"
 web_port = 2060
-log_level = "info"
-
 # نگاشت پورت‌ها
 ports = [
   "443-600",
@@ -240,8 +238,6 @@ remote_addr = "SERVER_IP:443"
 transport = "wssmux"
 token = "YOUR_TOKEN"
 web_port = 2061
-log_level = "info"
-
 # اختیاری برای سناریوهای CDN در WS/WSS
 edge_ip = ""
 ```

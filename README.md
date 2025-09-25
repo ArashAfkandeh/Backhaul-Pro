@@ -183,34 +183,6 @@ go build -o backhaul_pro
 
 ---
 
-### اجرای سرویس (systemd) و مدیریت سرویس‌ها
-اسکریپت نصب فایل سرویس را ایجاد می‌کند. نمونه سرویس (اگر نیاز به ساخت دستی داشتید):
-```ini
-[Unit]
-Description=Backhaul Pro Reverse Tunnel Service
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/root/backhaul_pro/backhaul_pro -c /root/backhaul_pro/config.toml
-Restart=always
-RestartSec=3
-LimitNOFILE=1048576
-
-[Install]
-WantedBy=multi-user.target
-```
-دستورات رایج:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable backhaul_pro.service
-sudo systemctl start backhaul_pro.service
-sudo systemctl status backhaul_pro.service
-sudo journalctl -u backhaul_pro.service -f
-```
-
----
-
 ### نمونه پیکربندی سرور و کلاینت با تیونینگ فعال
 تیونینگ خودکار به‌صورت پیش‌فرض فعال و بر روی مقدار 10 دقیقه است؛ کافیست بدون `--no-auto-tune` اجرا کنید. در مثال‌ها وب‌پنل برای مانیتورینگ روشن است.
 
@@ -249,6 +221,34 @@ edge_ip = ""
 ```
 
 - نکته: تیونینگ در هر دو سمت فعال است و Keepalive بین سرور/کلاینت همگام می‌شود. برای غیرفعال‌سازی: `--no-auto-tune`.
+
+---
+
+### اجرای سرویس (systemd) و مدیریت سرویس‌ها
+اسکریپت نصب فایل سرویس را ایجاد می‌کند. نمونه سرویس (اگر نیاز به ساخت دستی داشتید):
+```ini
+[Unit]
+Description=Backhaul Pro Reverse Tunnel Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/root/backhaul_pro/backhaul_pro -c /root/backhaul_pro/config.toml
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+```
+دستورات رایج:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable backhaul_pro.service
+sudo systemctl start backhaul_pro.service
+sudo systemctl status backhaul_pro.service
+sudo journalctl -u backhaul_pro.service -f
+```
 
 ---
 

@@ -192,34 +192,6 @@ go build -o backhaul_pro
 
 ---
 
-### Service (systemd) & Management
-The installer creates a service file. If you need a manual example:
-```ini
-[Unit]
-Description=Backhaul Pro Reverse Tunnel Service
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/root/backhaul_pro/backhaul_pro -c /root/backhaul_pro/config.toml
-Restart=always
-RestartSec=3
-LimitNOFILE=1048576
-
-[Install]
-WantedBy=multi-user.target
-```
-Common commands:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable backhaul_pro.service
-sudo systemctl start backhaul_pro.service
-sudo systemctl status backhaul_pro.service
-sudo journalctl -u backhaul_pro.service -f
-```
-
----
-
 ### Example Server/Client Configs with Auto-Tune enabled
 Auto-Tune is enabled by default (10 minutes). Just run without `--no-auto-tune`. Web panel is enabled in examples.
 
@@ -259,6 +231,34 @@ Run client (10m interval):
 ./backhaul_pro -c /root/backhaul_pro/config.toml --tune-interval 10m
 ```
 Note: Auto-Tune runs on both ends; keepalive is synchronized. Disable with `--no-auto-tune`.
+
+---
+
+### Service (systemd) & Management
+The installer creates a service file. If you need a manual example:
+```ini
+[Unit]
+Description=Backhaul Pro Reverse Tunnel Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/root/backhaul_pro/backhaul_pro -c /root/backhaul_pro/config.toml
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+```
+Common commands:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable backhaul_pro.service
+sudo systemctl start backhaul_pro.service
+sudo systemctl status backhaul_pro.service
+sudo journalctl -u backhaul_pro.service -f
+```
 
 ---
 
@@ -401,6 +401,7 @@ The script detects `backhaul_pro*.service` and `utunnel*.service`. If no configs
 - `mux_session`, `mux_version`: SMUX parameters with safe defaults
 - Sniffer: sorted JSON storage of per-port usage with human-readable formatting (KB/MB/GB)
 - Colored Logger: level set via `log_level`
+
 
 
 

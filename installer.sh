@@ -1213,6 +1213,13 @@ EOL
 
         show_success "Systemd service file created successfully: $(basename "$SERVICE_FILE")"
 
+        # Clean up offline repo directory
+        if [ -d "/root/backhaul_pro/offline_repo" ]; then
+            echo -e "${WHITE}Cleaning up offline repository...${NC}"
+            rm -rf "/root/backhaul_pro/offline_repo"
+            show_success "Offline repository cleaned up."
+        fi
+        
         sleep 2
 
         # Step 9: Start and enable the service

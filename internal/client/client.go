@@ -141,6 +141,9 @@ func (c *Client) Start() {
 			WebPort:          c.config.WebPort,
 			SnifferLog:       c.config.SnifferLog,
 			AggressivePool:   c.config.AggressivePool,
+			TunnelMode:       c.config.TunnelMode,
+			Ports:            c.config.Ports,
+			AcceptUDP:        c.config.AcceptUDP,
 		}
 		tcpMuxClient := transport.NewMuxClient(c.ctx, tcpMuxConfig, c.logger, usageMonitor)
 		go tcpMuxClient.Start()
@@ -160,6 +163,9 @@ func (c *Client) Start() {
 			Mode:           c.config.Transport,
 			AggressivePool: c.config.AggressivePool,
 			EdgeIP:         c.config.EdgeIP,
+			TunnelMode:     c.config.TunnelMode,
+			Ports:          c.config.Ports,
+			AcceptUDP:      c.config.AcceptUDP,
 		}
 		WsClient := transport.NewWSClient(c.ctx, WsConfig, c.logger, usageMonitor)
 		go WsClient.Start()
@@ -183,6 +189,9 @@ func (c *Client) Start() {
 			Mode:             c.config.Transport,
 			AggressivePool:   c.config.AggressivePool,
 			EdgeIP:           c.config.EdgeIP,
+			TunnelMode:       c.config.TunnelMode,
+			Ports:            c.config.Ports,
+			AcceptUDP:        c.config.AcceptUDP,
 		}
 		wsMuxClient := transport.NewWSMuxClient(c.ctx, wsMuxConfig, c.logger, usageMonitor)
 		go wsMuxClient.Start()
@@ -200,9 +209,29 @@ func (c *Client) Start() {
 			SnifferPort:    c.config.WebPort,
 			SnifferLog:     c.config.SnifferLog,
 			AggressivePool: c.config.AggressivePool,
+			TunnelMode:     c.config.TunnelMode,
+			Ports:          c.config.Ports,
+			AcceptUDP:      c.config.AcceptUDP,
 		}
 		quicClient := transport.NewQuicClient(c.ctx, quicConfig, c.logger, usageMonitor)
 		go quicClient.ChannelDialer(true)
+
+	case config.UDP:
+		udpConfig := &transport.UdpConfig{
+			RemoteAddr:     c.config.RemoteAddr,
+			Token:          c.config.Token,
+			SnifferLog:     c.config.SnifferLog,
+			RetryInterval:  time.Duration(c.config.RetryInterval) * time.Second,
+			DialTimeOut:    time.Duration(c.config.DialTimeout) * time.Second,
+			ConnPoolSize:   c.config.ConnectionPool,
+			SnifferPort:    c.config.WebPort,
+			Sniffer:        sniffer,
+			AggressivePool: c.config.AggressivePool,
+			TunnelMode:     c.config.TunnelMode,
+			Ports:          c.config.Ports,
+		}
+		udpClient := transport.NewUDPClient(c.ctx, udpConfig, c.logger, usageMonitor)
+		go udpClient.Start()
 	}
 
 	<-c.ctx.Done()

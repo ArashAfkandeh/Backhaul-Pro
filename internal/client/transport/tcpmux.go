@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +30,8 @@ type TcpMuxTransport struct {
 	poolConnections int32
 	loadConnections int32
 	controlFlow     chan struct{}
+	localChannel    chan LocalTCPConn
+	tunnelChannel   chan *smux.Session
 }
 
 type TcpMuxConfig struct {
@@ -48,6 +51,9 @@ type TcpMuxConfig struct {
 	ConnPoolSize     int
 	WebPort          int
 	AggressivePool   bool
+	TunnelMode       string
+	Ports            []string
+	AcceptUDP        bool
 }
 
 func NewMuxClient(parentCtx context.Context, config *TcpMuxConfig, logger *logrus.Logger, usageMonitor *web.Usage) *TcpMuxTransport {
@@ -74,6 +80,8 @@ func NewMuxClient(parentCtx context.Context, config *TcpMuxConfig, logger *logru
 		poolConnections: 0,
 		loadConnections: 0,
 		controlFlow:     make(chan struct{}, 100),
+		localChannel:    make(chan LocalTCPConn, 4096),
+		tunnelChannel:   make(chan *smux.Session, config.ConnPoolSize*2),
 	}
 
 	return client
@@ -82,6 +90,11 @@ func NewMuxClient(parentCtx context.Context, config *TcpMuxConfig, logger *logru
 func (c *TcpMuxTransport) Start() {
 	// Do NOT start usageMonitor.Monitor here!
 	c.config.TunnelStatus = "Disconnected (TCPMUX)"
+
+	if c.config.TunnelMode == "direct" {
+		go c.parsePortMappings()
+	}
+
 	go c.channelDialer()
 }
 
@@ -120,6 +133,8 @@ func (c *TcpMuxTransport) Restart() {
 	c.poolConnections = 0
 	c.loadConnections = 0
 	c.controlFlow = make(chan struct{}, 100)
+	c.localChannel = make(chan LocalTCPConn, 4096)
+	c.tunnelChannel = make(chan *smux.Session, c.config.ConnPoolSize*2)
 
 	// set the log level again
 	c.logger.SetLevel(level)
@@ -177,6 +192,17 @@ func (c *TcpMuxTransport) channelDialer() {
 				c.logger.Info("control channel established successfully")
 
 				c.config.TunnelStatus = "Connected (TCPMux)"
+
+				if c.config.TunnelMode == "direct" {
+					numCPU := runtime.NumCPU()
+					if numCPU > 4 {
+						numCPU = 4
+					}
+					c.logger.Infof("starting %d direct handle loops on each CPU thread", numCPU)
+					for i := 0; i < numCPU; i++ {
+						go c.handleLoopDirect()
+					}
+				}
 
 				go c.poolMaintainer()
 				go c.channelHandler()
@@ -313,6 +339,14 @@ func (c *TcpMuxTransport) channelHandler() {
 
 			case utils.SG_HB:
 				c.logger.Debug("heartbeat signal received successfully")
+
+			case utils.SG_RTT:
+				err := utils.SendBinaryByte(c.controlChannel, utils.SG_RTT)
+				if err != nil {
+					c.logger.Error("failed to send RTT signal, restarting client: ", err)
+					go c.Restart()
+					return
+				}
 
 			case utils.SG_Closed:
 				c.logger.Warn("control channel has been closed by the server")

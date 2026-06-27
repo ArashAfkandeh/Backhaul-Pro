@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +30,8 @@ type WsTransport struct {
 	poolConnections int32
 	loadConnections int32
 	controlFlow     chan struct{}
+	localChannel    chan LocalTCPConn
+	tunnelChannel   chan *websocket.Conn
 }
 type WsConfig struct {
 	RemoteAddr     string
@@ -45,6 +48,9 @@ type WsConfig struct {
 	Mode           config.TransportType
 	AggressivePool bool
 	EdgeIP         string
+	TunnelMode     string
+	Ports          []string
+	AcceptUDP      bool
 }
 
 func NewWSClient(parentCtx context.Context, config *WsConfig, logger *logrus.Logger, usageMonitor *web.Usage) *WsTransport {
@@ -63,6 +69,8 @@ func NewWSClient(parentCtx context.Context, config *WsConfig, logger *logrus.Log
 		poolConnections: 0,
 		loadConnections: 0,
 		controlFlow:     make(chan struct{}, 100),
+		localChannel:    make(chan LocalTCPConn, 4096),
+		tunnelChannel:   make(chan *websocket.Conn, config.ConnPoolSize*2),
 	}
 
 	return client
@@ -72,8 +80,11 @@ func (c *WsTransport) Start() {
 	// Do NOT start usageMonitor.Monitor here!
 	c.config.TunnelStatus = fmt.Sprintf("Disconnected (%s)", c.config.Mode)
 
-	go c.channelDialer()
+	if c.config.TunnelMode == "direct" {
+		go c.parsePortMappings()
+	}
 
+	go c.channelDialer()
 }
 func (c *WsTransport) Restart() {
 	if !c.restartMutex.TryLock() {
@@ -110,6 +121,8 @@ func (c *WsTransport) Restart() {
 	c.poolConnections = 0
 	c.loadConnections = 0
 	c.controlFlow = make(chan struct{}, 100)
+	c.localChannel = make(chan LocalTCPConn, 4096)
+	c.tunnelChannel = make(chan *websocket.Conn, c.config.ConnPoolSize*2)
 
 	// set the log level again
 	c.logger.SetLevel(level)
@@ -149,6 +162,17 @@ func (c *WsTransport) channelDialer() {
 			c.logger.Info("control channel established successfully")
 
 			c.config.TunnelStatus = fmt.Sprintf("Connected (%s)", c.config.Mode)
+
+			if c.config.TunnelMode == "direct" {
+				numCPU := runtime.NumCPU()
+				if numCPU > 4 {
+					numCPU = 4
+				}
+				c.logger.Infof("starting %d direct handle loops on each CPU thread", numCPU)
+				for i := 0; i < numCPU; i++ {
+					go c.handleLoopDirect()
+				}
+			}
 
 			go c.poolMaintainer()
 			go c.channelHandler()
@@ -290,6 +314,14 @@ func (c *WsTransport) channelHandler() {
 				}
 				c.logger.Trace("heartbeat signal sent successfully")
 
+			case utils.SG_RTT:
+				err := c.controlChannel.WriteMessage(websocket.BinaryMessage, []byte{utils.SG_RTT})
+				if err != nil {
+					c.logger.Error("failed to send RTT signal, restarting client: ", err)
+					go c.Restart()
+					return
+				}
+
 			case utils.SG_Closed:
 				c.logger.Warn("control channel has been closed by the server")
 				go c.Restart()
@@ -330,6 +362,17 @@ func (c *WsTransport) tunnelDialer() {
 
 	// Increment active connections counter
 	atomic.AddInt32(&c.poolConnections, 1)
+
+	if c.config.TunnelMode == "direct" {
+		select {
+		case c.tunnelChannel <- tunnelConn:
+		default:
+			c.logger.Debugf("tunnel listener channel is full, discarding WS connection")
+			tunnelConn.Close()
+			atomic.AddInt32(&c.poolConnections, -1)
+		}
+		return
+	}
 
 	for {
 		select {

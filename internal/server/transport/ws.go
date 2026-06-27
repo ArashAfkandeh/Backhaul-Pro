@@ -13,6 +13,7 @@ import (
 	"github.com/musix/backhaul/internal/config"
 	"github.com/musix/backhaul/internal/utils"
 	"github.com/musix/backhaul/internal/web"
+	"github.com/musix/backhaul/internal/client/transport"
 
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
@@ -48,6 +49,8 @@ type WsConfig struct {
 	WebPort        int
 	Mode           config.TransportType // ws or wss
 	AllowedClients []string             // Whitelist of allowed client IPs/domains
+	TunnelMode     string
+	AcceptUDP      bool
 }
 
 func NewWSServer(parentCtx context.Context, config *WsConfig, logger *logrus.Logger) *WsTransport {
@@ -289,13 +292,21 @@ func (s *WsTransport) tunnelListener() {
 					numCPU = 4 // Max allowed handler is 4
 				}
 
-				go s.channelHandler()
-				go s.parsePortMappings()
+				if s.config.TunnelMode == "direct" {
+					go s.channelHandlerDirect()
+					s.logger.Infof("starting %d direct handle loops on each CPU thread", numCPU)
+					for i := 0; i < numCPU; i++ {
+						go s.handleLoopDirect()
+					}
+				} else {
+					go s.channelHandler()
+					go s.parsePortMappings()
 
-				s.logger.Infof("starting %d handle loops on each CPU thread", numCPU)
+					s.logger.Infof("starting %d handle loops on each CPU thread", numCPU)
 
-				for i := 0; i < numCPU; i++ {
-					go s.handleLoop()
+					for i := 0; i < numCPU; i++ {
+						go s.handleLoop()
+					}
 				}
 
 				s.config.TunnelStatus = fmt.Sprintf("Connected (%s)", s.config.Mode)
@@ -472,6 +483,147 @@ func (s *WsTransport) acceptLocalConn(listener net.Listener, cfg utils.ListenerC
 				conn.Close()
 			}
 		}
+	}
+}
+
+func (s *WsTransport) channelHandlerDirect() {
+	const maxRetries = 3
+	const baseBackoff = time.Second
+	ticker := time.NewTicker(s.config.Heartbeat)
+	defer ticker.Stop()
+	messageChan := make(chan byte, 10)
+
+	go func() {
+		retries := 0
+		for {
+			select {
+			case <-s.ctx.Done():
+				return
+			default:
+				_, msg, err := s.controlChannel.ReadMessage()
+				if err != nil {
+					s.logger.Errorf("failed to read from channel connection (try %d/%d): %v", retries+1, maxRetries, err)
+					retries++
+					if retries >= maxRetries {
+						if s.cancel != nil {
+							s.logger.Error("max retries reached, restarting...")
+							go s.Restart()
+						}
+						return
+					}
+					time.Sleep(baseBackoff * time.Duration(retries))
+					continue
+				}
+				retries = 0
+				if len(msg) == 0 {
+					s.logger.Warn("received empty message from control channel")
+					continue
+				}
+				messageChan <- msg[0]
+			}
+		}
+	}()
+
+	rtt := time.Now()
+	err := s.controlChannel.WriteMessage(websocket.BinaryMessage, []byte{utils.SG_RTT})
+	if err != nil {
+		s.logger.Error("failed to send RTT signal, attempting to restart server...")
+		go s.Restart()
+		return
+	}
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			_ = s.controlChannel.WriteMessage(websocket.BinaryMessage, []byte{utils.SG_Closed})
+			return
+		case <-ticker.C:
+			err := s.controlChannel.WriteMessage(websocket.BinaryMessage, []byte{utils.SG_HB})
+			if err != nil {
+				s.logger.Errorf("failed to send heartbeat signal. Error: %v.", err)
+				go s.Restart()
+				return
+			}
+		case msg, ok := <-messageChan:
+			if !ok {
+				s.logger.Error("channel closed, likely due to an error in WebSocket read")
+				return
+			}
+			switch msg {
+			case utils.SG_HB:
+				s.logger.Trace("heartbeat signal received successfully")
+			case utils.SG_Closed:
+				s.logger.Warn("control channel has been closed by the client")
+				s.Restart()
+				return
+			case utils.SG_RTT:
+				measureRTT := time.Since(rtt)
+				s.logger.Infof("Round Trip Time (RTT): %d ms", measureRTT.Milliseconds())
+			default:
+				s.logger.Errorf("unexpected response from channel: %v", msg)
+				go s.Restart()
+				return
+			}
+		}
+	}
+}
+
+func (s *WsTransport) handleLoopDirect() {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case tunnelConnection := <-s.tunnelChannel:
+			go s.handleDirectConnection(tunnelConnection)
+		}
+	}
+}
+
+func (s *WsTransport) handleDirectConnection(tunnelConnection TunnelChannel) {
+	close(tunnelConnection.ping)
+	
+	_, remoteAddrBytes, err := tunnelConnection.conn.ReadMessage()
+	if err != nil {
+		s.logger.Debugf("failed to read from direct tunnel: %v", err)
+		tunnelConnection.conn.Close()
+		return
+	}
+	if len(remoteAddrBytes) == 0 {
+		tunnelConnection.conn.Close()
+		return
+	}
+	if remoteAddrBytes[0] == utils.SG_Ping {
+		// Ping
+		tunnelConnection.conn.Close()
+		return
+	}
+
+	remoteAddr, tunTransport, err := utils.DecodeTransportStringBytes(remoteAddrBytes)
+	if err != nil {
+		s.logger.Debugf("failed to decode transport string: %v", err)
+		tunnelConnection.conn.Close()
+		return
+	}
+
+	port, resolvedAddr, err := transport.ResolveRemoteAddr(remoteAddr)
+	if err != nil {
+		tunnelConnection.conn.Close()
+		return
+	}
+
+	switch tunTransport {
+	case utils.SG_TCP:
+		localConnection, err := transport.TcpDialer(s.ctx, resolvedAddr, 10*time.Second, s.config.KeepAlive, true, 1, 32*1024, 32*1024, s.logger)
+		if err != nil {
+			tunnelConnection.conn.Close()
+			return
+		}
+		utils.WSConnectionHandler(tunnelConnection.conn, localConnection, s.logger, s.usageMonitor, port, s.config.Sniffer)
+	case utils.SG_UDP:
+		// Not implemented for WS non-mux yet, but fallback just closes
+		tunnelConnection.conn.Close()
+	default:
+		tunnelConnection.conn.Close()
 	}
 }
 

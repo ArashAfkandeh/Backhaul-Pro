@@ -40,6 +40,7 @@ type UdpConfig struct {
 	ChannelSize    int
 	WebPort        int
 	AllowedClients []string // Whitelist of allowed client IPs/domains
+	TunnelMode     string
 }
 
 func NewUDPServer(parentCtx context.Context, config *UdpConfig, logger *logrus.Logger) *UdpTransport {
@@ -71,7 +72,11 @@ func (s *UdpTransport) Start() {
 		go s.usageMonitor.Monitor()
 	}
 
-	go s.channelHandshake()
+	if s.config.TunnelMode == "direct" {
+		go s.tunnelListener()
+	} else {
+		go s.channelHandshake()
+	}
 }
 
 func (s *UdpTransport) Restart() {
@@ -371,6 +376,9 @@ func (s *UdpTransport) acceptTunnelConn(listener *net.UDPConn) {
 			case s.tunnelChannel <- &tunnelConn:
 				go s.keepAlive(&tunnelConn)
 				s.logger.Debugf("accepted tunnel connection from %s", addr.String())
+				if s.config.TunnelMode == "direct" {
+					go s.handleDirectTunnelUDPConn(&tunnelConn)
+				}
 			default:
 				s.logger.Warn("UDP tunnel channel is full")
 				// Close the newly created connection as it couldn't be added

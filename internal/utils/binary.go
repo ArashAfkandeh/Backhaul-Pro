@@ -236,3 +236,26 @@ func ReceiveBinaryByte(conn net.Conn) (byte, error) {
 	// Convert the message buffer to a string and return it
 	return messageBuf[0], nil
 }
+
+func EncodeTransportStringBytes(message string, transport byte) []byte {
+	const headerSize = 3
+	buf := make([]byte, headerSize+len(message))
+	binary.BigEndian.PutUint16(buf[:2], uint16(len(message)))
+	buf[2] = transport
+	copy(buf[headerSize:], message)
+	return buf
+}
+
+func DecodeTransportStringBytes(buf []byte) (string, byte, error) {
+	const headerSize = 3
+	if len(buf) < headerSize {
+		return "", 0, fmt.Errorf("buffer too short")
+	}
+	messageLength := binary.BigEndian.Uint16(buf[:2])
+	transport := buf[2]
+	if len(buf) < headerSize+int(messageLength) {
+		return "", 0, fmt.Errorf("buffer does not contain full message")
+	}
+	message := string(buf[headerSize : headerSize+int(messageLength)])
+	return message, transport, nil
+}

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/musix/backhaul/internal/client/transport"
 	"github.com/musix/backhaul/internal/utils"
 	"github.com/musix/backhaul/internal/web"
 
@@ -53,6 +54,8 @@ type TcpMuxConfig struct {
 	KeepAlive        time.Duration
 	Heartbeat        time.Duration // in seconds
 	AllowedClients   []string      // Whitelist of allowed client IPs/domains
+	TunnelMode       string
+	AcceptUDP        bool
 }
 
 func NewTcpMuxServer(parentCtx context.Context, config *TcpMuxConfig, logger *logrus.Logger) *TcpMuxTransport {
@@ -105,15 +108,22 @@ func (s *TcpMuxTransport) Start() {
 			numCPU = 4 // Max allowed handler is 4
 		}
 
-		go s.parsePortMappings()
-		go s.channelHandler()
+		if s.config.TunnelMode == "direct" {
+			go s.channelHandlerDirect()
+			s.logger.Infof("starting %d direct handle loops on each CPU thread", numCPU)
+			for i := 0; i < numCPU; i++ {
+				go s.handleLoopDirect()
+			}
+		} else {
+			go s.parsePortMappings()
+			go s.channelHandler()
 
-		s.logger.Infof("starting %d handle loops on each CPU thread", numCPU)
+			s.logger.Infof("starting %d handle loops on each CPU thread", numCPU)
 
-		for i := 0; i < numCPU; i++ {
-			go s.handleLoop()
+			for i := 0; i < numCPU; i++ {
+				go s.handleLoop()
+			}
 		}
-
 	}
 
 }
@@ -259,6 +269,14 @@ func (s *TcpMuxTransport) channelHandler() {
 		}
 	}()
 
+	rtt := time.Now()
+	err := utils.SendBinaryByte(s.controlChannel, utils.SG_RTT)
+	if err != nil {
+		s.logger.Error("failed to send RTT signal, attempting to restart server...")
+		go s.Restart()
+		return
+	}
+
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -288,10 +306,90 @@ func (s *TcpMuxTransport) channelHandler() {
 				return
 			}
 
-			if message == utils.SG_Closed {
+			switch message {
+			case utils.SG_Closed:
 				s.logger.Warn("control channel has been closed by the client")
 				go s.Restart()
 				return
+			case utils.SG_RTT:
+				measureRTT := time.Since(rtt)
+				s.logger.Infof("Round Trip Time (RTT): %d ms", measureRTT.Milliseconds())
+			}
+		}
+	}
+}
+
+func (s *TcpMuxTransport) channelHandlerDirect() {
+	const maxRetries = 3
+	const baseBackoff = time.Second
+	ticker := time.NewTicker(s.config.Heartbeat)
+	defer ticker.Stop()
+
+	messageChan := make(chan byte, 1)
+
+	go func() {
+		retries := 0
+		for {
+			select {
+			case <-s.ctx.Done():
+				return
+			default:
+				message, err := utils.ReceiveBinaryByte(s.controlChannel)
+				if err != nil {
+					s.logger.Errorf("failed to read from channel connection (try %d/%d): %v", retries+1, maxRetries, err)
+					retries++
+					if retries >= maxRetries {
+						if s.cancel != nil {
+							s.logger.Error("max retries reached, restarting...")
+							go s.Restart()
+						}
+						return
+					}
+					time.Sleep(baseBackoff * time.Duration(retries))
+					continue
+				}
+				retries = 0
+				messageChan <- message
+			}
+		}
+	}()
+
+	rtt := time.Now()
+	err := utils.SendBinaryByte(s.controlChannel, utils.SG_RTT)
+	if err != nil {
+		s.logger.Error("failed to send RTT signal, attempting to restart server...")
+		go s.Restart()
+		return
+	}
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			_ = utils.SendBinaryByte(s.controlChannel, utils.SG_Closed)
+			return
+
+		case <-ticker.C:
+			err := utils.SendBinaryByte(s.controlChannel, utils.SG_HB)
+			if err != nil {
+				s.logger.Error("failed to send heartbeat signal")
+				go s.Restart()
+				return
+			}
+
+		case message, ok := <-messageChan:
+			if !ok {
+				s.logger.Error("channel closed, likely due to an error in TCP read")
+				return
+			}
+
+			switch message {
+			case utils.SG_Closed:
+				s.logger.Warn("control channel has been closed by the client")
+				go s.Restart()
+				return
+			case utils.SG_RTT:
+				measureRTT := time.Since(rtt)
+				s.logger.Infof("Round Trip Time (RTT): %d ms", measureRTT.Milliseconds())
 			}
 		}
 	}
@@ -502,6 +600,64 @@ func (s *TcpMuxTransport) acceptLocalConn(listener net.Listener, cfg utils.Liste
 		}
 	}
 
+}
+
+func (s *TcpMuxTransport) handleLoopDirect() {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+
+		case session := <-s.tunnelChannel:
+			atomic.AddInt32(&s.sessionCounter, 1)
+			go s.handleSessionDirect(session)
+		}
+	}
+}
+
+func (s *TcpMuxTransport) handleSessionDirect(session *smux.Session) {
+	defer session.Close()
+	defer atomic.AddInt32(&s.sessionCounter, -1)
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+			stream, err := session.AcceptStream()
+			if err != nil {
+				s.logger.Debug("session is closed: ", err)
+				return
+			}
+			go func(stm *smux.Stream) {
+				remoteAddr, tunTransport, err := utils.ReceiveBinaryTransportString(stm)
+				if err != nil {
+					s.logger.Debugf("failed to receive remote addr from stream: %v", err)
+					stm.Close()
+					return
+				}
+				port, resolvedAddr, err := transport.ResolveRemoteAddr(remoteAddr)
+				if err != nil {
+					stm.Close()
+					return
+				}
+
+				switch tunTransport {
+				case utils.SG_TCP:
+					localConnection, err := transport.TcpDialer(s.ctx, resolvedAddr, 10*time.Second, s.config.KeepAlive, true, 1, 32*1024, 32*1024, s.logger)
+					if err != nil {
+						stm.Close()
+						return
+					}
+					utils.TCPConnectionHandler(stm, localConnection, s.logger, s.usageMonitor, port, s.config.Sniffer)
+				case utils.SG_UDP:
+					transport.UDPDialer(stm, resolvedAddr, s.logger, s.usageMonitor, port, s.config.Sniffer)
+				default:
+					stm.Close()
+				}
+			}(stream)
+		}
+	}
 }
 
 func (s *TcpMuxTransport) handleLoop() {

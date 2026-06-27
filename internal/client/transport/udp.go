@@ -39,6 +39,8 @@ type UdpConfig struct {
 	SnifferPort    int // Sniffer port
 	Sniffer        bool
 	AggressivePool bool
+	TunnelMode     string
+	Ports          []string
 }
 
 func NewUDPClient(parentCtx context.Context, config *UdpConfig, logger *logrus.Logger, usageMonitor *web.Usage) *UdpTransport {
@@ -66,7 +68,11 @@ func (c *UdpTransport) Start() {
 	// Do NOT start usageMonitor.Monitor here!
 	c.config.TunnelStatus = "Disconnected (UDP)"
 
-	go c.channelDialer()
+	if c.config.TunnelMode == "direct" {
+		go c.parsePortMappingsDirect()
+	} else {
+		go c.channelDialer()
+	}
 }
 
 func (c *UdpTransport) Restart() {

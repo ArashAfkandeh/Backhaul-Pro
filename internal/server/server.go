@@ -138,6 +138,8 @@ func (s *Server) Start() {
 			WebPort:          s.config.WebPort,
 			SnifferLog:       s.config.SnifferLog,
 			AllowedClients:   s.config.AllowedClients,
+			TunnelMode:       s.config.TunnelMode,
+			AcceptUDP:        s.config.AcceptUDP,
 		}
 
 		tcpMuxServer := transport.NewTcpMuxServer(s.ctx, tcpMuxConfig, s.logger)
@@ -159,6 +161,8 @@ func (s *Server) Start() {
 			TLSCertFile:    s.config.TLSCertFile,
 			TLSKeyFile:     s.config.TLSKeyFile,
 			AllowedClients: s.config.AllowedClients,
+			TunnelMode:     s.config.TunnelMode,
+			AcceptUDP:      s.config.AcceptUDP,
 		}
 
 		wsServer := transport.NewWSServer(s.ctx, wsConfig, s.logger)
@@ -185,6 +189,8 @@ func (s *Server) Start() {
 			TLSCertFile:      s.config.TLSCertFile,
 			TLSKeyFile:       s.config.TLSKeyFile,
 			AllowedClients:   s.config.AllowedClients,
+			TunnelMode:       s.config.TunnelMode,
+			AcceptUDP:        s.config.AcceptUDP,
 		}
 
 		wsMuxServer := transport.NewWSMuxServer(s.ctx, wsMuxConfig, s.logger)
@@ -206,6 +212,8 @@ func (s *Server) Start() {
 			TLSCertFile:    s.config.TLSCertFile,
 			TLSKeyFile:     s.config.TLSKeyFile,
 			AllowedClients: s.config.AllowedClients,
+			TunnelMode:     s.config.TunnelMode,
+			AcceptUDP:      s.config.AcceptUDP,
 		}
 
 		quicServer := transport.NewQuicServer(s.ctx, quicConfig, s.logger)
@@ -222,6 +230,7 @@ func (s *Server) Start() {
 			WebPort:        s.config.WebPort,
 			SnifferLog:     s.config.SnifferLog,
 			AllowedClients: s.config.AllowedClients,
+			TunnelMode:     s.config.TunnelMode,
 		}
 
 		udpServer := transport.NewUDPServer(s.ctx, udpConfig, s.logger)

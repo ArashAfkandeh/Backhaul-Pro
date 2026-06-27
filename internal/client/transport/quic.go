@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ type QuicTransport struct {
 	activeMu          sync.Mutex
 	restartMutex      sync.Mutex
 	activeConnections int
+	localChannel      chan LocalTCPConn
 }
 
 type QuicConfig struct {
@@ -49,6 +51,9 @@ type QuicConfig struct {
 	APIPort          int // API port
 	SnifferPort      int // Sniffer port
 	AggressivePool   bool
+	TunnelMode       string
+	Ports            []string
+	AcceptUDP        bool
 }
 
 func NewQuicClient(parentCtx context.Context, config *QuicConfig, logger *logrus.Logger, usageMonitor *web.Usage) *QuicTransport {
@@ -71,6 +76,7 @@ func NewQuicClient(parentCtx context.Context, config *QuicConfig, logger *logrus
 		activeConnections: 0,
 		activeMu:          sync.Mutex{},
 		usageMonitor:      usageMonitor, // use the passed-in usageMonitor
+		localChannel:      make(chan LocalTCPConn, 4096),
 	}
 
 	return client
@@ -103,6 +109,7 @@ func (c *QuicTransport) Restart() {
 	c.config.TunnelStatus = ""
 	c.activeConnections = 0
 	c.activeMu = sync.Mutex{}
+	c.localChannel = make(chan LocalTCPConn, 4096)
 
 	go c.ChannelDialer(true)
 
@@ -174,10 +181,24 @@ func (c *QuicTransport) ChannelDialer(coldStart bool) {
 
 				c.config.TunnelStatus = "Connected (Quic)"
 
-				go c.channelListener()
+				if c.config.TunnelMode == "direct" {
+					go c.parsePortMappings()
+					go c.channelListener()
 
-				if coldStart {
-					go c.poolChecker()
+					numCPU := runtime.NumCPU()
+					if numCPU > 4 {
+						numCPU = 4
+					}
+					c.logger.Infof("starting %d direct handle loops on each CPU thread", numCPU)
+					for i := 0; i < numCPU; i++ {
+						go c.handleLoopDirect()
+					}
+				} else {
+					go c.channelListener()
+
+					if coldStart {
+						go c.poolChecker()
+					}
 				}
 
 				return
@@ -267,6 +288,13 @@ func (c *QuicTransport) channelListener() {
 			case utils.SG_HB:
 				c.logger.Debug("heartbeat signal received successfully")
 				tickerTimeout.Reset(3 * time.Second)
+			case utils.SG_RTT:
+				err := utils.SendBinaryByte(stream, utils.SG_RTT)
+				if err != nil {
+					c.logger.Error("failed to send RTT signal, restarting client: ", err)
+					go c.ChannelDialer(false)
+					return
+				}
 			default:
 				c.logger.Errorf("unexpected response from channel: %v. Restarting client...", msg)
 				go c.ChannelDialer(false)

@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,8 @@ type WsMuxTransport struct {
 	poolConnections int32
 	loadConnections int32
 	controlFlow     chan struct{}
+	localChannel    chan LocalTCPConn
+	tunnelChannel   chan *smux.Session
 }
 type WsMuxConfig struct {
 	RemoteAddr       string
@@ -50,6 +53,9 @@ type WsMuxConfig struct {
 	Mode             config.TransportType
 	AggressivePool   bool
 	EdgeIP           string
+	TunnelMode       string
+	Ports            []string
+	AcceptUDP        bool
 }
 
 func NewWSMuxClient(parentCtx context.Context, config *WsMuxConfig, logger *logrus.Logger, usageMonitor *web.Usage) *WsMuxTransport {
@@ -74,6 +80,8 @@ func NewWSMuxClient(parentCtx context.Context, config *WsMuxConfig, logger *logr
 		poolConnections: 0,
 		loadConnections: 0,
 		controlFlow:     make(chan struct{}, 100),
+		localChannel:    make(chan LocalTCPConn, 4096),
+		tunnelChannel:   make(chan *smux.Session, config.ConnPoolSize*2),
 	}
 
 	return client
@@ -82,6 +90,11 @@ func NewWSMuxClient(parentCtx context.Context, config *WsMuxConfig, logger *logr
 func (c *WsMuxTransport) Start() {
 	// Do NOT start usageMonitor.Monitor here!
 	c.config.TunnelStatus = fmt.Sprintf("Disconnected (%s)", c.config.Mode)
+
+	if c.config.TunnelMode == "direct" {
+		go c.parsePortMappings()
+	}
+
 	go c.channelDialer()
 }
 
@@ -120,6 +133,8 @@ func (c *WsMuxTransport) Restart() {
 	c.poolConnections = 0
 	c.loadConnections = 0
 	c.controlFlow = make(chan struct{}, 100)
+	c.localChannel = make(chan LocalTCPConn, 4096)
+	c.tunnelChannel = make(chan *smux.Session, c.config.ConnPoolSize*2)
 
 	// set the log level again
 	c.logger.SetLevel(level)
@@ -161,6 +176,17 @@ func (c *WsMuxTransport) channelDialer() {
 			c.logger.Info("control channel established successfully")
 
 			c.config.TunnelStatus = fmt.Sprintf("Connected (%s)", c.config.Mode)
+
+			if c.config.TunnelMode == "direct" {
+				numCPU := runtime.NumCPU()
+				if numCPU > 4 {
+					numCPU = 4
+				}
+				c.logger.Infof("starting %d direct handle loops on each CPU thread", numCPU)
+				for i := 0; i < numCPU; i++ {
+					go c.handleLoopDirect()
+				}
+			}
 
 			go c.poolMaintainer()
 			go c.channelHandler()
@@ -299,6 +325,14 @@ func (c *WsMuxTransport) channelHandler() {
 					return
 				}
 				c.logger.Trace("heartbeat signal sent successfully")
+
+			case utils.SG_RTT:
+				err := c.controlChannel.WriteMessage(websocket.BinaryMessage, []byte{utils.SG_RTT})
+				if err != nil {
+					c.logger.Error("failed to send RTT signal, restarting client: ", err)
+					go c.Restart()
+					return
+				}
 
 			case utils.SG_Closed:
 				c.logger.Warn("control channel has been closed by the server")

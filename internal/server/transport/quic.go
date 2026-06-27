@@ -48,6 +48,8 @@ type QuicConfig struct {
 	TLSCertFile    string        // Path to the TLS certificate file
 	TLSKeyFile     string        // Path to the TLS key file
 	AllowedClients []string      // Whitelist of allowed client IPs/domains
+	AcceptUDP      bool
+	TunnelMode     string
 }
 
 func NewQuicServer(parentCtx context.Context, config *QuicConfig, logger *logrus.Logger) *QuicTransport {
@@ -273,10 +275,26 @@ func (s *QuicTransport) channelHandshake(qConn quic.Connection) {
 	s.logger.Info("QUIC control channel successfully established.")
 
 	// call the functions
-	if s.coldStart {
-		go s.portConfigReader()
-		go s.handleTunConn()
+	if s.config.TunnelMode == "direct" {
+		if s.coldStart {
+			go func() {
+				for {
+					select {
+					case <-s.ctx.Done():
+						return
+					case tunConn := <-s.tunnelChan:
+						go s.handleSessionDirect(tunConn)
+					}
+				}
+			}()
+		}
+	} else {
+		if s.coldStart {
+			go s.portConfigReader()
+			go s.handleTunConn()
+		}
 	}
+
 	go s.keepalive()
 
 	s.config.TunnelStatus = "Connected (QUIC)"

@@ -274,10 +274,10 @@ ports = [
   "in2.example.com:6701=10.0.0.2:8080",
 
   # 2) Alias: map an alternative hostname to the same backend
-  "de1.nomac.ir:6701=10.0.0.2:8080",  # alias for in2.example.com
+  "de1.example.com:6701=10.0.0.2:8080",  # alias for in2.example.com
 
   # 3) Fallback / load-balance: multiple remotes for a single listener
-  ":16445=107.181.134.170:16445",
+  ":16445=45.92.219.26:16445",
   ":16445=45.67.139.215:15346",
   ":16445=5.253.31.5:4973",
 ]

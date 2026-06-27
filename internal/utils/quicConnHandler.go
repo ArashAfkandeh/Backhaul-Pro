@@ -5,12 +5,16 @@ import (
 	"io"
 	"net"
 
-	"github.com/musix/backhaul/internal/web"
 	"github.com/quic-go/quic-go"
 	"github.com/sirupsen/logrus"
 )
 
-func QConnectionHandler(from net.Conn, to quic.Stream, logger *logrus.Logger, usage *web.Usage, remotePort int, sniffer bool) {
+// UsageRecorder interface برای ثبت استفاده ترافیک
+type UsageRecorder interface {
+	AddOrUpdatePort(port int, usage uint64)
+}
+
+func QConnectionHandler(from net.Conn, to quic.Stream, logger *logrus.Logger, usage UsageRecorder, remotePort int, sniffer bool) {
 	done := make(chan struct{})
 
 	go func() {
@@ -24,7 +28,7 @@ func QConnectionHandler(from net.Conn, to quic.Stream, logger *logrus.Logger, us
 }
 
 // Using direct Read and Write for transferring data
-func q1transferData(from io.ReadWriter, to io.ReadWriter, tcp net.Conn, quic quic.Stream, logger *logrus.Logger, usage *web.Usage, remotePort int, sniffer bool) {
+func q1transferData(from io.ReadWriter, to io.ReadWriter, tcp net.Conn, quic quic.Stream, logger *logrus.Logger, usage UsageRecorder, remotePort int, sniffer bool) {
 	buf := make([]byte, 16*1024) // 16K
 	for {
 		// Read data from the source connection

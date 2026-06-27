@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	_ "net/http/pprof"
+	"os"
 	"time"
 
 	"github.com/musix/backhaul/internal/config"
@@ -11,14 +13,16 @@ import (
 	"github.com/musix/backhaul/internal/utils"
 	"github.com/musix/backhaul/internal/web"
 
+	"github.com/BurntSushi/toml"
 	"github.com/sirupsen/logrus"
 )
 
 type Server struct {
-	config *config.ServerConfig
-	ctx    context.Context
-	cancel context.CancelFunc
-	logger *logrus.Logger
+	config         *config.ServerConfig
+	configFilePath string
+	ctx            context.Context
+	cancel         context.CancelFunc
+	logger         *logrus.Logger
 }
 
 // پیاده‌سازی ConfigProvider
@@ -31,13 +35,51 @@ func (s *Server) GetClientConfig() *config.ClientConfig {
 	return nil // Server doesn't have client config
 }
 
-func NewServer(cfg *config.ServerConfig, parentCtx context.Context) *Server {
+// GetConfigFilePath implements web.ConfigProvider interface
+func (s *Server) GetConfigFilePath() string {
+	return s.configFilePath
+}
+
+// SaveConfig implements web.ConfigProvider interface
+func (s *Server) SaveConfig() error {
+	// Marshal the full config back to TOML
+	fullConfig := &config.Config{
+		Server: s.config,
+	}
+
+	// Write to file
+	f, err := os.Create(s.configFilePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	encoder := toml.NewEncoder(f)
+	return encoder.Encode(fullConfig)
+}
+
+// SaveConfigUpdates implements web.ConfigProvider interface - updates only changed fields
+func (s *Server) SaveConfigUpdates(updates map[string]interface{}, configType string) error {
+	if configType != "server" {
+		return fmt.Errorf("server provider can only save server config updates")
+	}
+
+	for key, value := range updates {
+		if err := utils.UpdateTOMLValue(s.configFilePath, "server", key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func NewServer(cfg *config.ServerConfig, parentCtx context.Context, configFilePath string) *Server {
 	ctx, cancel := context.WithCancel(parentCtx)
 	return &Server{
-		config: cfg,
-		ctx:    ctx,
-		cancel: cancel,
-		logger: utils.NewLogger(cfg.LogLevel),
+		config:         cfg,
+		configFilePath: configFilePath,
+		ctx:            ctx,
+		cancel:         cancel,
+		logger:         utils.NewLogger(cfg.LogLevel),
 	}
 }
 
@@ -55,17 +97,18 @@ func (s *Server) Start() {
 	switch s.config.Transport {
 	case config.TCP:
 		tcpConfig := &transport.TcpConfig{
-			BindAddr:    s.config.BindAddr,
-			Nodelay:     s.config.Nodelay,
-			KeepAlive:   time.Duration(s.config.Keepalive) * time.Second,
-			Heartbeat:   time.Duration(s.config.Heartbeat) * time.Second,
-			Token:       s.config.Token,
-			ChannelSize: s.config.ChannelSize,
-			Ports:       s.config.Ports,
-			Sniffer:     *s.config.Sniffer,
-			WebPort:     s.config.WebPort,
-			SnifferLog:  s.config.SnifferLog,
-			AcceptUDP:   s.config.AcceptUDP,
+			BindAddr:       s.config.BindAddr,
+			Nodelay:        s.config.Nodelay,
+			KeepAlive:      time.Duration(s.config.Keepalive) * time.Second,
+			Heartbeat:      time.Duration(s.config.Heartbeat) * time.Second,
+			Token:          s.config.Token,
+			ChannelSize:    s.config.ChannelSize,
+			Ports:          s.config.Ports,
+			Sniffer:        *s.config.Sniffer,
+			WebPort:        s.config.WebPort,
+			SnifferLog:     s.config.SnifferLog,
+			AcceptUDP:      s.config.AcceptUDP,
+			AllowedClients: s.config.AllowedClients,
 		}
 
 		tcpServer := transport.NewTCPServer(s.ctx, tcpConfig, s.logger)
@@ -88,6 +131,7 @@ func (s *Server) Start() {
 			Sniffer:          *s.config.Sniffer,
 			WebPort:          s.config.WebPort,
 			SnifferLog:       s.config.SnifferLog,
+			AllowedClients:   s.config.AllowedClients,
 		}
 
 		tcpMuxServer := transport.NewTcpMuxServer(s.ctx, tcpMuxConfig, s.logger)
@@ -95,19 +139,20 @@ func (s *Server) Start() {
 
 	case config.WS, config.WSS:
 		wsConfig := &transport.WsConfig{
-			BindAddr:    s.config.BindAddr,
-			Nodelay:     s.config.Nodelay,
-			KeepAlive:   time.Duration(s.config.Keepalive) * time.Second,
-			Heartbeat:   time.Duration(s.config.Heartbeat) * time.Second,
-			Token:       s.config.Token,
-			ChannelSize: s.config.ChannelSize,
-			Ports:       s.config.Ports,
-			Sniffer:     *s.config.Sniffer,
-			WebPort:     s.config.WebPort,
-			SnifferLog:  s.config.SnifferLog,
-			Mode:        s.config.Transport,
-			TLSCertFile: s.config.TLSCertFile,
-			TLSKeyFile:  s.config.TLSKeyFile,
+			BindAddr:       s.config.BindAddr,
+			Nodelay:        s.config.Nodelay,
+			KeepAlive:      time.Duration(s.config.Keepalive) * time.Second,
+			Heartbeat:      time.Duration(s.config.Heartbeat) * time.Second,
+			Token:          s.config.Token,
+			ChannelSize:    s.config.ChannelSize,
+			Ports:          s.config.Ports,
+			Sniffer:        *s.config.Sniffer,
+			WebPort:        s.config.WebPort,
+			SnifferLog:     s.config.SnifferLog,
+			Mode:           s.config.Transport,
+			TLSCertFile:    s.config.TLSCertFile,
+			TLSKeyFile:     s.config.TLSKeyFile,
+			AllowedClients: s.config.AllowedClients,
 		}
 
 		wsServer := transport.NewWSServer(s.ctx, wsConfig, s.logger)
@@ -133,6 +178,7 @@ func (s *Server) Start() {
 			Mode:             s.config.Transport,
 			TLSCertFile:      s.config.TLSCertFile,
 			TLSKeyFile:       s.config.TLSKeyFile,
+			AllowedClients:   s.config.AllowedClients,
 		}
 
 		wsMuxServer := transport.NewWSMuxServer(s.ctx, wsMuxConfig, s.logger)
@@ -140,19 +186,20 @@ func (s *Server) Start() {
 
 	case config.QUIC:
 		quicConfig := &transport.QuicConfig{
-			BindAddr:    s.config.BindAddr,
-			Nodelay:     s.config.Nodelay,
-			KeepAlive:   time.Duration(s.config.Keepalive) * time.Second,
-			Heartbeat:   time.Duration(s.config.Heartbeat) * time.Second,
-			Token:       s.config.Token,
-			MuxCon:      s.config.MuxCon,
-			ChannelSize: s.config.ChannelSize,
-			Ports:       s.config.Ports,
-			Sniffer:     *s.config.Sniffer,
-			WebPort:     s.config.WebPort,
-			SnifferLog:  s.config.SnifferLog,
-			TLSCertFile: s.config.TLSCertFile,
-			TLSKeyFile:  s.config.TLSKeyFile,
+			BindAddr:       s.config.BindAddr,
+			Nodelay:        s.config.Nodelay,
+			KeepAlive:      time.Duration(s.config.Keepalive) * time.Second,
+			Heartbeat:      time.Duration(s.config.Heartbeat) * time.Second,
+			Token:          s.config.Token,
+			MuxCon:         s.config.MuxCon,
+			ChannelSize:    s.config.ChannelSize,
+			Ports:          s.config.Ports,
+			Sniffer:        *s.config.Sniffer,
+			WebPort:        s.config.WebPort,
+			SnifferLog:     s.config.SnifferLog,
+			TLSCertFile:    s.config.TLSCertFile,
+			TLSKeyFile:     s.config.TLSKeyFile,
+			AllowedClients: s.config.AllowedClients,
 		}
 
 		quicServer := transport.NewQuicServer(s.ctx, quicConfig, s.logger)
@@ -160,14 +207,15 @@ func (s *Server) Start() {
 
 	case config.UDP:
 		udpConfig := &transport.UdpConfig{
-			BindAddr:    s.config.BindAddr,
-			Heartbeat:   time.Duration(s.config.Heartbeat) * time.Second,
-			Token:       s.config.Token,
-			ChannelSize: s.config.ChannelSize,
-			Ports:       s.config.Ports,
-			Sniffer:     *s.config.Sniffer,
-			WebPort:     s.config.WebPort,
-			SnifferLog:  s.config.SnifferLog,
+			BindAddr:       s.config.BindAddr,
+			Heartbeat:      time.Duration(s.config.Heartbeat) * time.Second,
+			Token:          s.config.Token,
+			ChannelSize:    s.config.ChannelSize,
+			Ports:          s.config.Ports,
+			Sniffer:        *s.config.Sniffer,
+			WebPort:        s.config.WebPort,
+			SnifferLog:     s.config.SnifferLog,
+			AllowedClients: s.config.AllowedClients,
 		}
 
 		udpServer := transport.NewUDPServer(s.ctx, udpConfig, s.logger)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,18 +31,19 @@ type TcpTransport struct {
 }
 
 type TcpConfig struct {
-	BindAddr     string
-	Token        string
-	SnifferLog   string
-	TunnelStatus string
-	Ports        []string
-	Nodelay      bool
-	Sniffer      bool
-	KeepAlive    time.Duration
-	Heartbeat    time.Duration // in seconds
-	ChannelSize  int
-	WebPort      int
-	AcceptUDP    bool
+	BindAddr       string
+	Token          string
+	SnifferLog     string
+	TunnelStatus   string
+	Ports          []string
+	Nodelay        bool
+	Sniffer        bool
+	KeepAlive      time.Duration
+	Heartbeat      time.Duration // in seconds
+	ChannelSize    int
+	WebPort        int
+	AcceptUDP      bool
+	AllowedClients []string // Whitelist of allowed client IPs/domains
 }
 
 func NewTCPServer(parentCtx context.Context, config *TcpConfig, logger *logrus.Logger) *TcpTransport {
@@ -265,12 +265,12 @@ func (s *TcpTransport) channelHandler() {
 				return
 			}
 
-			if message == utils.SG_Closed {
+			switch message {
+			case utils.SG_Closed:
 				s.logger.Warn("control channel has been closed by the client")
 				go s.Restart()
 				return
-
-			} else if message == utils.SG_RTT {
+			case utils.SG_RTT:
 				measureRTT := time.Since(rtt)
 				s.rtt = measureRTT.Milliseconds()
 				s.logger.Infof("Round Trip Time (RTT): %d ms", s.rtt)
@@ -316,6 +316,13 @@ func (s *TcpTransport) acceptTunnelConn(listener net.Listener) {
 				continue
 			}
 
+			// Check if client is in whitelist
+			if !utils.IsClientAllowed(tcpConn.RemoteAddr().String(), s.config.AllowedClients) {
+				s.logger.Warnf("client %s is not in whitelist, rejecting connection", tcpConn.RemoteAddr().String())
+				tcpConn.Close()
+				continue
+			}
+
 			// Drop all suspicious packets from other address rather than server
 			if s.controlChannel != nil && s.controlChannel.RemoteAddr().(*net.TCPAddr).IP.String() != tcpConn.RemoteAddr().(*net.TCPAddr).IP.String() {
 				s.logger.Debugf("suspicious packet from %v. expected address: %v. discarding packet...", tcpConn.RemoteAddr().(*net.TCPAddr).IP.String(), s.controlChannel.RemoteAddr().(*net.TCPAddr).IP.String())
@@ -353,112 +360,34 @@ func (s *TcpTransport) acceptTunnelConn(listener net.Listener) {
 }
 
 func (s *TcpTransport) parsePortMappings() {
-	for _, portMapping := range s.config.Ports {
-		parts := strings.Split(portMapping, "=")
+	// Use the shared parser that understands host:port left-hand side values
+	mapping := utils.ParsePortsToListenerConfig(s.config.Ports)
 
-		var localAddr, remoteAddr string
-
-		// Check if only a single port or a port range is provided (no "=" present)
-		if len(parts) == 1 {
-			localPortOrRange := strings.TrimSpace(parts[0])
-			remoteAddr = localPortOrRange // If no remote addr is provided, use the local port as the remote port
-
-			// Check if it's a port range
-			if strings.Contains(localPortOrRange, "-") {
-				rangeParts := strings.Split(localPortOrRange, "-")
-				if len(rangeParts) != 2 {
-					s.logger.Fatalf("invalid port range format: %s", localPortOrRange)
-				}
-
-				// Parse and validate start and end ports
-				startPort, err := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
-				if err != nil || startPort < 1 || startPort > 65535 {
-					s.logger.Fatalf("invalid start port in range: %s", rangeParts[0])
-				}
-
-				endPort, err := strconv.Atoi(strings.TrimSpace(rangeParts[1]))
-				if err != nil || endPort < 1 || endPort > 65535 || endPort < startPort {
-					s.logger.Fatalf("invalid end port in range: %s", rangeParts[1])
-				}
-
-				// Create listeners for all ports in the range
-				for port := startPort; port <= endPort; port++ {
-					localAddr = fmt.Sprintf(":%d", port)
-					go s.startListeners(localAddr, strconv.Itoa(port)) // Use port as the remoteAddr
-					time.Sleep(1 * time.Millisecond)                   // for wide port ranges
-				}
-				continue
-			} else {
-				// Handle single port case
-				port, err := strconv.Atoi(localPortOrRange)
-				if err != nil || port < 1 || port > 65535 {
-					s.logger.Fatalf("invalid port format: %s", localPortOrRange)
-				}
-				localAddr = fmt.Sprintf(":%d", port)
-			}
-		} else if len(parts) == 2 {
-			// Handle "local=remote" format
-			localPortOrRange := strings.TrimSpace(parts[0])
-			remoteAddr = strings.TrimSpace(parts[1])
-
-			// Check if local port is a range
-			if strings.Contains(localPortOrRange, "-") {
-				rangeParts := strings.Split(localPortOrRange, "-")
-				if len(rangeParts) != 2 {
-					s.logger.Fatalf("invalid port range format: %s", localPortOrRange)
-				}
-
-				// Parse and validate start and end ports
-				startPort, err := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
-				if err != nil || startPort < 1 || startPort > 65535 {
-					s.logger.Fatalf("invalid start port in range: %s", rangeParts[0])
-				}
-
-				endPort, err := strconv.Atoi(strings.TrimSpace(rangeParts[1]))
-				if err != nil || endPort < 1 || endPort > 65535 || endPort < startPort {
-					s.logger.Fatalf("invalid end port in range: %s", rangeParts[1])
-				}
-
-				// Create listeners for all ports in the range
-				for port := startPort; port <= endPort; port++ {
-					localAddr = fmt.Sprintf(":%d", port)
-					go s.startListeners(localAddr, remoteAddr)
-					time.Sleep(1 * time.Millisecond) // for wide port ranges
-				}
-				continue
-			} else {
-				// Handle single local port case
-				port, err := strconv.Atoi(localPortOrRange)
-				if err == nil && port > 1 && port < 65535 { // format port=remoteAddress
-					localAddr = fmt.Sprintf(":%d", port)
-				} else {
-					localAddr = localPortOrRange // format ip:port=remoteAddress
-				}
-			}
-		} else {
-			s.logger.Fatalf("invalid port mapping format: %s", portMapping)
-		}
-		// Start listeners for single port
-		go s.startListeners(localAddr, remoteAddr)
+	for laddr, cfg := range mapping {
+		go s.startListeners(laddr, cfg)
 	}
 }
 
-func (s *TcpTransport) startListeners(localAddr, remoteAddr string) {
+func (s *TcpTransport) startListeners(localAddr string, cfg utils.ListenerConfig) {
 	// Start TCP listener
-	go s.localListener(localAddr, remoteAddr)
+	go s.localListener(localAddr, cfg)
 
 	// Start UDP listener if configured
 	if s.config.AcceptUDP {
-		go s.udpListener(localAddr, remoteAddr)
+		go s.udpListener(localAddr, cfg.Remotes)
 	}
 
-	s.logger.Debugf("Started listening on %s, forwarding to %s", localAddr, remoteAddr)
+	s.logger.Debugf("Started listening on %s, forwarding to %v (hosts=%v)", localAddr, cfg.Remotes, cfg.HostMap)
 }
 
-func (s *TcpTransport) localListener(localAddr string, remoteAddr string) {
+func (s *TcpTransport) localListener(localAddr string, cfg utils.ListenerConfig) {
 	listener, err := net.Listen("tcp", localAddr)
 	if err != nil {
-		s.logger.Fatalf("failed to listen on %s: %v", localAddr, err)
+		if strings.Contains(err.Error(), "address already in use") {
+			s.logger.Fatalf("failed to listen on %s: %v", localAddr, err)
+		} else {
+			s.logger.Warnf("failed to listen on %s (remote service may be unavailable): %v", localAddr, err)
+		}
 		return
 	}
 
@@ -466,12 +395,12 @@ func (s *TcpTransport) localListener(localAddr string, remoteAddr string) {
 
 	s.logger.Infof("listener started successfully, listening on address: %s", listener.Addr().String())
 
-	go s.acceptLocalConn(listener, remoteAddr)
+	go s.acceptLocalConn(listener, cfg)
 
 	<-s.ctx.Done()
 }
 
-func (s *TcpTransport) acceptLocalConn(listener net.Listener, remoteAddr string) {
+func (s *TcpTransport) acceptLocalConn(listener net.Listener, cfg utils.ListenerConfig) {
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -502,8 +431,33 @@ func (s *TcpTransport) acceptLocalConn(listener net.Listener, remoteAddr string)
 				}
 			}
 
+			// Determine target remote based on Host/SNI when available
+			var selectedRemote string
+			if len(cfg.HostMap) > 0 {
+				// peek into the connection for HTTP Host header or TLS SNI
+				peekRes, err := utils.PeekHostFromConn(conn, 100*time.Millisecond, 4096)
+				if err == nil || err == utils.ErrNoData {
+					// use wrapped conn if provided so buffered bytes are preserved
+					if peekRes.Conn != nil {
+						conn = peekRes.Conn
+					}
+					if peekRes.Host != "" {
+						if target, ok := cfg.HostMap[peekRes.Host]; ok {
+							selectedRemote = target
+						}
+					}
+				} else {
+					s.logger.Debugf("host peek failed: %v", err)
+				}
+			}
+
+			if selectedRemote == "" {
+				// fallback to existing selection/load-balance behaviour
+				selectedRemote = utils.SelectBySrcDstHash(conn.RemoteAddr().String(), listener.Addr().String(), cfg.Remotes)
+			}
+
 			select {
-			case s.localChannel <- LocalTCPConn{conn: conn, remoteAddr: remoteAddr, timeCreated: time.Now().UnixMilli()}:
+			case s.localChannel <- LocalTCPConn{conn: conn, remoteAddr: selectedRemote, timeCreated: time.Now().UnixMilli()}:
 
 				select {
 				case s.reqNewConnChan <- struct{}{}:
@@ -513,7 +467,7 @@ func (s *TcpTransport) acceptLocalConn(listener net.Listener, remoteAddr string)
 					s.logger.Warn("channel is full, cannot request a new connection")
 				}
 
-				s.logger.Debugf("accepted incoming TCP connection from %s", tcpConn.RemoteAddr().String())
+				s.logger.Debugf("accepted incoming TCP connection from %s -> %s", tcpConn.RemoteAddr().String(), selectedRemote)
 
 			default: // channel is full, discard the connection
 				s.logger.Warnf("channel with listener %s is full, discarding TCP connection from %s", listener.Addr().String(), tcpConn.LocalAddr().String())

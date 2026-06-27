@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -375,7 +376,12 @@ func (c *TcpTransport) localDialer(tcpConn net.Conn, remoteAddr string, port int
 	// Set Default S,R buffer to 32kb also enabling nodelay on send side of local network ( receive side should be handled by xray)
 	localConnection, err := TcpDialer(c.ctx, remoteAddr, c.config.DialTimeOut, c.config.KeepAlive, true, 1, 32*1024, 32*1024, c.logger)
 	if err != nil {
-		c.logger.Errorf("local dialer: %v", err)
+		// Connection refused errors are expected when service is not running, use Trace/Warn
+		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "Connection refused") {
+			c.logger.Tracef("local dialer: service unavailable at %s: %v", remoteAddr, err)
+		} else {
+			c.logger.Warnf("local dialer: failed to connect to %s: %v", remoteAddr, err)
+		}
 		tcpConn.Close()
 		return
 	}

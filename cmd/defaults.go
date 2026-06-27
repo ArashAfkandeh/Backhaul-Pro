@@ -1,32 +1,33 @@
 package cmd
 
 import (
-	"github.com/musix/backhaul/internal/config"
-
 	"os"
+	"path/filepath"
 
+	"github.com/musix/backhaul/internal/config"
 	"github.com/sirupsen/logrus"
 )
 
 const ( // Default values
-	defaultToken          = "musix"
-	defaultRetryInterval  = 3 // only for client
-	defaultLogLevel       = "info"
-	defaultChannelSize    = 2048
-	defaultConnectionPool = 8
-	defaultMuxSession     = 1
-	defaultKeepAlive      = 75
-	deafultHeartbeat      = 40 // 40 seconds
-	defaultDialTimeout    = 10 // 10 seconds
+	defaultToken         = "musix"
+	defaultRetryInterval = 3 // only for client
+	defaultLogLevel      = "info"
+	defaultChannelSize   = 2048
+	defaultMuxSession    = 1
+	defaultKeepAlive     = 75
+	deafultHeartbeat     = 40 // 40 seconds
+	defaultDialTimeout   = 10 // 10 seconds
 	// related to smux
 	defaultMuxVersion       = 1
 	defaultMaxFrameSize     = 32768   // 32KB
 	defaultMaxReceiveBuffer = 4194304 // 4MB
 	defaultMaxStreamBuffer  = 65536   // 256KB
-	defaultSnifferLog       = "backhaul.json"
+	defaultSnifferLog       = "Backhaul-Pro.json"
 	defaultMuxCon           = 8
 	defaultNodelay          = true
 	defaultAggressivePool   = true
+	defaultWebPort          = 2060 // Sniffer/Dashboard port
+	defaultAPIPort          = 2080 // Independent API server port
 )
 
 func applyDefaults(cfg *config.Config) {
@@ -111,14 +112,34 @@ func applyDefaults(cfg *config.Config) {
 	if cfg.Client.MaxStreamBuffer <= 0 {
 		cfg.Client.MaxStreamBuffer = defaultMaxStreamBuffer
 	}
-	// WebPort returns 0 if not exists
+	// WebPort (Sniffer/Dashboard)
+	if cfg.Server.WebPort <= 0 {
+		cfg.Server.WebPort = defaultWebPort
+	}
+	if cfg.Client.WebPort <= 0 {
+		cfg.Client.WebPort = defaultWebPort
+	}
+	// APIPort (Independent API server)
+	if cfg.Server.APIPort <= 0 {
+		cfg.Server.APIPort = defaultAPIPort
+	}
+	if cfg.Client.APIPort <= 0 {
+		cfg.Client.APIPort = defaultAPIPort
+	}
 
-	// SnifferLog
+	// SnifferLog - باید مسیر کنار executable باشد
+	execPath, err := os.Executable()
+	var logPath string
+	if err == nil {
+		logPath = filepath.Join(filepath.Dir(execPath), defaultSnifferLog)
+	} else {
+		logPath = defaultSnifferLog
+	}
 	if cfg.Server.SnifferLog == "" {
-		cfg.Server.SnifferLog = defaultSnifferLog
+		cfg.Server.SnifferLog = logPath
 	}
 	if cfg.Client.SnifferLog == "" {
-		cfg.Client.SnifferLog = defaultSnifferLog
+		cfg.Client.SnifferLog = logPath
 	}
 	// Sniffer default: true unless explicitly set to false (for client)
 	if cfg.Client.Sniffer == nil {
@@ -147,16 +168,22 @@ func applyDefaults(cfg *config.Config) {
 
 	// TLS cert/key default
 	if cfg.Server.TLSCertFile == "" || cfg.Server.TLSKeyFile == "" {
-		basedir, err := os.Getwd()
+		// استفاده از مسیر executable بجای working directory
+		execPath, err := os.Executable()
+		var certsDir string
 		if err != nil {
-			basedir = "."
+			// اگر نتوانستیم مسیر executable را بگیریم، از working directory استفاده کن
+			basedir, _ := os.Getwd()
+			certsDir = basedir + "/certs"
+		} else {
+			// مسیر folder certs کنار executable
+			certsDir = filepath.Join(filepath.Dir(execPath), "certs")
 		}
-		sslDir := basedir + "/ssl"
 		if cfg.Server.TLSCertFile == "" {
-			cfg.Server.TLSCertFile = sslDir + "/server.crt"
+			cfg.Server.TLSCertFile = filepath.Join(certsDir, "fullchain.crt")
 		}
 		if cfg.Server.TLSKeyFile == "" {
-			cfg.Server.TLSKeyFile = sslDir + "/server.key"
+			cfg.Server.TLSKeyFile = filepath.Join(certsDir, "privkey.key")
 		}
 	}
 

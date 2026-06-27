@@ -1,0 +1,76 @@
+# مثال کانفیگ Backhaul-Pro با جداسازی APIPort و WebPort
+
+# ===== تنظیمات سرور =====
+[server]
+bind_addr = "0.0.0.0:22"
+transport = "tcp"
+token = "musix"
+log_level = "info"
+ports = ["8000-8100"]
+# Examples for host-based mapping (Host/SNI exact match):
+# "in1.example.com:6701=10.0.0.1:8080"
+# "in2.example.com:6701=10.0.0.2:8080"
+# Alias example (map another hostname to same backend):
+# "de1.nomac.ir:6701=10.0.0.2:8080"
+
+# پورت‌های ویب
+web_port = 2060   # Sniffer/Dashboard (http://localhost:2060)
+api_port = 2080   # Independent API Server (https://localhost:2080)
+
+# تنظیمات اضافی
+keepalive_period = 75
+heartbeat = 40
+sniffer = true
+sniffer_log = "Backhaul-Pro.json"
+pprof = false
+
+# TLS (اختیاری)
+tls_cert = "certs/fullchain.crt"
+tls_key = "certs/privkey.key"
+
+# تنظیمات Tunnel
+mux_con = 8
+mux_session = 1
+mux_version = 1
+mux_framesize = 32768
+mux_recievebuffer = 4194304
+mux_streambuffer = 65536
+
+# UDP (اختیاری)
+accept_udp = false
+
+# Whitelist (اختیاری)
+# allowed_clients = ["192.168.1.0/24", "10.0.0.1"]
+
+# ===== تنظیمات کلاینت =====
+[client]
+remote_addr = "server.example.com:22"
+transport = "tcp"
+token = "musix"
+log_level = "info"
+
+# پورت‌های ویب
+web_port = 2060   # Sniffer/Dashboard (http://localhost:2060)
+api_port = 2080   # Independent API Server (https://localhost:2080)
+
+# تنظیمات اضافی
+keepalive_period = 75
+retry_interval = 3
+dial_timeout = 10
+sniffer = true
+sniffer_log = "Backhaul-Pro.json"
+pprof = false
+
+# تنظیمات Tunnel
+mux_session = 1
+mux_version = 1
+mux_framesize = 32768
+mux_recievebuffer = 4194304
+mux_streambuffer = 65536
+
+# تنظیمات Performance
+aggressive_pool = true
+connection_pool = 10
+
+# Edge IP (اختیاری)
+# edge_ip = "1.2.3.4"

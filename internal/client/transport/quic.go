@@ -46,7 +46,8 @@ type QuicConfig struct {
 	MaxReceiveBuffer int
 	MaxStreamBuffer  int
 	ConnectionPool   int
-	WebPort          int
+	APIPort          int // API port
+	SnifferPort      int // Sniffer port
 	AggressivePool   bool
 }
 
@@ -98,7 +99,7 @@ func (c *QuicTransport) Restart() {
 
 	// Re-initialize variables
 	c.controlChannel = nil
-	c.usageMonitor = web.NewDataStore(fmt.Sprintf(":%v", c.config.WebPort), ctx, c.config.SnifferLog, c.config.Sniffer, &c.config.TunnelStatus, c.logger)
+	c.usageMonitor = web.NewDataStore(fmt.Sprintf(":%v", c.config.SnifferPort), ctx, c.config.SnifferLog, c.config.Sniffer, &c.config.TunnelStatus, c.logger)
 	c.config.TunnelStatus = ""
 	c.activeConnections = 0
 	c.activeMu = sync.Mutex{}
@@ -108,7 +109,7 @@ func (c *QuicTransport) Restart() {
 }
 
 func (c *QuicTransport) ChannelDialer(coldStart bool) {
-	if coldStart && c.config.WebPort > 0 {
+	if coldStart && c.config.SnifferPort > 0 {
 		go c.usageMonitor.Monitor()
 	}
 	c.config.TunnelStatus = "Disconnected (Quic)"

@@ -2,7 +2,7 @@
 
 A high-performance reverse tunneling system to traverse NAT and firewalls, supporting TCP/WS/WSS and multiplexed modes, with a built-in monitoring web panel, optional sniffer, and automatic performance tuning.
 
-- Version: v0.6.6
+- Version: v1.0.0
 - Language: Go 1.23+
 - GitHub repository: [Backhaul-Pro](https://github.com/ArashAfkandeh/Backhaul-Pro.git)
 - License: AGPL-3.0
@@ -15,6 +15,7 @@ A high-performance reverse tunneling system to traverse NAT and firewalls, suppo
 - Web Panel & Monitoring APIs
 - Automatic Tuning (Auto-Tune)
 - Hot Reload of configuration
+- Client Whitelist (Access Control)
 - Install & Upgrade (using installer.sh)
 - Manual Build from Source
 - Service (systemd) & Service Management
@@ -40,7 +41,7 @@ Backhaul is designed for secure and scalable traffic tunneling from behind NAT/f
   - Applies temporary TCP tuning on OS startup
   - Starts main logic via `cmd.Run`
   - Launches dynamic Tuner (if enabled)
-  - Hot Reload on configuration file changes
+  - **Hot Reload**: automatically monitors config file; changes are applied immediately and safely without service interruption
   - Graceful shutdown and force-shutdown handling
 
 - Command module (`cmd/`):
@@ -53,8 +54,9 @@ Backhaul is designed for secure and scalable traffic tunneling from behind NAT/f
 
 - Web panel & Sniffer (`internal/web/`):
   - Built-in HTML dashboard (Tailwind)
-  - Endpoints: `/`, `/stats`, `/data`, `/config`
+  - Endpoints: `/`, `/stats`, `/data`, `/config`, `/api/health-score`
   - Stores and serves per-port usage reports as JSON
+  - Automatic HTTPS (with or without certificates)
 
 ---
 
@@ -63,9 +65,11 @@ Backhaul is designed for secure and scalable traffic tunneling from behind NAT/f
 - Multiple transports: `tcp`, `tcpmux`, `ws`, `wss`, `wsmux`, `wssmux`, `udp`
 - Multiplexing (SMUX) for multiple logical streams over one connection
 - Monitoring web panel with live system/tunnel stats and current config
+- **Health Score API**: **Hybrid** system health scores (average of server + client) for performance monitoring.
 - Optional sniffer: per-port usage logs as readable JSON
 - Auto-Tune: dynamic adjustment of `keepalive`, `mux_*`, `channel_size`, `connection_pool`, `heartbeat`, `mux_con`
 - Hot Reload: safe application of config changes
+- HTTPS: API and sniffer secured with HTTPS and self-signed (or valid) certificates
 - PPROF: optional profiling on ports 6060/6061 (Server/Client)
 
 Note: QUIC support is removed in this project. Focus is on TCP/WS/WSS (+MUX) and UDP.
@@ -89,16 +93,37 @@ Use cases:
 ### Security & Authentication
 - Token: all tunnel requests are authenticated with `token`. Use a strong random value.
 - TLS (WSS/WSSMUX only): use a valid certificate in production. Self-signed generation samples are provided below.
+- Client Whitelist: restrict tunnel access to specific client IPs, IP ranges (CIDR), or domains with fine-grained control, including IPv6 support.
 - Web panel: restrict access (IP whitelist, firewall, reverse proxy) or bind to a local interface.
 
 ---
 
 ### Web Panel & Monitoring APIs
-Enabled when `web_port > 0`.
+Enabled when `web_port > 0`. All connections are secured with HTTPS (or HTTP fallback if no certificate).
 - `/` HTML dashboard with current config, tunnel status, and system stats
 - `/stats` JSON: CPU/RAM/Disk/Swap/Traffic/BackhaulTraffic/Connections/Status
 - `/data` JSON of per-port usage (only if `sniffer=true`)
 - `/config` current config without sensitive fields; `?type=client` returns client config
+- `/api/health-score` JSON of **Hybrid** system health scores (average of server + client metrics)
+
+Example `/api/health-score` response:
+```json
+{
+  "resource_score": 75,
+  "network_score": 82,
+  "timestamp": 1731850000
+}
+```
+
+**Hybrid Score Explanation:**
+- **ResourceScore**: average of server and client resource usage (CPU, RAM) - higher = better
+- **NetworkScore**: average of server and client network quality (Latency, PacketLoss, Throughput) - higher = better
+- If client is not connected, only server scores are used
+
+Calculation method:
+- Server calculates its own metrics (CPU, RAM, Latency, etc)
+- Server fetches client metrics via `/api/health-score` endpoint (through Tuner)
+- Final score = average of server and client scores
 
 Client-side dynamic sync:
 - Client periodically syncs some parameters (e.g., `keepalive_period`, `mux_*`) from server `/config`.
@@ -120,6 +145,44 @@ Enabled by default. Disable with `--no-auto-tune`. Tuning interval is configurab
 The `-c` config file is watched; when its mtime changes:
 - Gracefully stop previous instance (cancel context) and start a new one
 - Stop/restart Tuner if enabled
+
+**Automatic Error Recovery:**
+- If a change is made via API or directly in the file and causes an error in the program, the system **automatically** reverts the config to the last successful version
+- This prevents unwanted service interruption
+
+---
+
+### Client Whitelist (Access Control)
+
+The `allowed_clients` field in server config restricts tunnel access to specific clients only.
+
+**Features:**
+- **IP Filtering**: Restrict access to specific IPs and CIDR ranges
+- **IPv4 & IPv6**: Full support for both protocol versions
+- **CIDR Ranges**: Define network ranges (e.g., `192.168.0.0/24`)
+- **All Transports**: Works with TCP, TCPMUX, WS/WSS, WSMUX/WSSMUX, UDP, QUIC
+
+**Example config:**
+```toml
+[server]
+bind_addr = "0.0.0.0:8080"
+transport = "tcp"
+token = "your_secure_token"
+
+# Only these clients can use the tunnel
+allowed_clients = [
+    "192.168.1.100",           # Specific IP
+    "192.168.1.0/24",          # CIDR range
+    "10.0.0.0/8"               # Class A range
+]
+```
+
+**Behavior:**
+- If list is empty (or not present), all clients are allowed
+- If client IP/domain not in list, connection is **immediately closed**
+- Rejections are logged for debugging
+
+See [`CLIENT_WHITELIST.md`](./CLIENT_WHITELIST.md) for complete documentation.
 
 ---
 
@@ -205,10 +268,24 @@ web_port = 2060
 
 # Port mappings
 ports = [
-  "443-600",
-  "443-600:5201",
-  "443-600=1.1.1.1:5201",
+  # 1) Host-based mapping (exact match on HTTP Host or TLS SNI)
+  #    Format: "host:port=dest_ip:dest_port"
+  "in1.example.com:6701=10.0.0.1:8080",
+  "in2.example.com:6701=10.0.0.2:8080",
+
+  # 2) Alias: map an alternative hostname to the same backend
+  "de1.nomac.ir:6701=10.0.0.2:8080",  # alias for in2.example.com
+
+  # 3) Fallback / load-balance: multiple remotes for a single listener
+  ":16445=107.181.134.170:16445",
+  ":16445=45.67.139.215:15346",
+  ":16445=5.253.31.5:4973",
 ]
+
+Note: Current implementation supports exact host matching (case-insensitive)
+using the received HTTP `Host` header or TLS SNI. Wildcard patterns
+(`*.example.com`) are not enabled by default — ask if you want wildcard
+or suffix-matching behavior added (priority: exact → specific wildcard → general wildcard → fallback).
 ```
 Run server (10m interval):
 ```bash
@@ -358,6 +435,47 @@ Watches the `-c` file. On modification:
 1) Stops current Tuner if enabled
 2) Cancels previous context and starts a fresh instance
 3) Restarts Tuner (if enabled) with updated config
+
+**Error Detection & Automatic Rollback:**
+- If a change is made via API (e.g., POST `/api/config`) and causes an error in the program, the system **automatically** and **without user intervention** reverts the config to the last working version
+- If a change is made directly to the `config.toml` file and causes an error, the previous version is loaded
+- This protection prevents the service from being interrupted due to misconfiguration
+
+---
+
+### Web Panel Monitoring APIs (Details)
+When `web_port > 0`, all APIs are available via HTTPS (if certificate exists; otherwise HTTP fallback).
+
+**Main endpoints:**
+- `GET /` HTML dashboard page
+- `GET /stats` system and tunnel stats (JSON)
+- `GET /data` per-port usage (JSON, if `sniffer=true`)
+- `GET /config` current config (JSON)
+- `GET /api/health-score` system health scores (JSON)
+
+**Usage examples:**
+```bash
+# Get health scores
+curl --insecure https://127.0.0.1:2060/api/health-score | jq .
+
+# Get statistics
+curl --insecure https://127.0.0.1:2060/stats | jq .
+
+# Get config
+curl --insecure https://127.0.0.1:2060/config | jq .
+```
+
+---
+
+### HTTPS & TLS Certificates
+- **Automatic generation**: The program **automatically** generates the required SSL self-signed certificates. If the files `fullchain.crt` and `privkey.key` do not exist in the `certs/` folder alongside the executable, the system creates them automatically.
+- **Manual**: If you want to use a custom certificate, place the files `fullchain.crt` and `privkey.key` in the `certs/` folder:
+```bash
+openssl genpkey -algorithm RSA -out privkey.key -pkeyopt rsa_keygen_bits:2048
+openssl req -new -x509 -days 365 -key privkey.key -out fullchain.crt
+```
+The program will then use these certificates for HTTPS.
+- **First run**: On the first execution, if no certificate exists, the program automatically creates one and stores it in `certs/`.
 
 If graceful shutdown exceeds 5 seconds, a force shutdown is applied.
 

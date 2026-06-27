@@ -30,7 +30,7 @@ var (
 )
 
 // Define the version of the application
-const version = "v0.6.6"
+const version = "v1.0.0"
 
 func main() {
 	configPath = flag.String("c", "", "path to the configuration file (TOML format)")
@@ -64,7 +64,7 @@ func main() {
 	go handleShutdown(sigChan)
 
 	// Start the main application logic
-	logger.Info("Starting Backhaul application...")
+	logger.Info("🚀 Starting Backhaul-Pro " + version + " application...")
 
 	// Run the application in a separate goroutine
 	wg.Add(1)
@@ -72,43 +72,46 @@ func main() {
 		defer wg.Done()
 		defer func() {
 			if r := recover(); r != nil {
-				logger.Errorf("Application panic: %v", r)
+				logger.Errorf("💥 Application panic: %v", r)
 			}
 		}()
 
 		cfg := cmd.Run(*configPath, ctx)
 
-		// Start the dynamic tuner unless --no-auto-tune is set
-		if !*noAutoTune {
-			mu.Lock()
-			tuner = tuning.NewTuner(cfg, utils.NewLogger(cfg.Server.LogLevel))
-			tuner.Start(*tuneInterval)
-			mu.Unlock()
-			logger.Info("Auto-tuning enabled")
-		} else {
-			logger.Info("Auto-tuning disabled by flag")
-		}
+	// start the automatic cleanup for load-balancer state; use sensible
+	// defaults and stop it when the application shuts down
+	cleanupStop := utils.StartAutoCleanup(60*time.Minute, 24*time.Hour)
+	defer utils.StopAutoCleanup(cleanupStop)
 
-		// Wait for context cancellation
-		<-ctx.Done()
-		logger.Info("Application context cancelled, shutting down...")
+	// Start the dynamic tuner unless --no-auto-tune is set
+	if !*noAutoTune {
+		mu.Lock()
+		tuner = tuning.NewTuner(cfg, utils.NewLogger(cfg.Server.LogLevel))
+		tuner.Start(*tuneInterval)
+		mu.Unlock()
+		logger.Info("⚙️  Auto-tuning enabled")
+	} else {
+		logger.Info("🚫 Auto-tuning disabled by flag")
+	} // Wait for context cancellation
+	<-ctx.Done()
+		logger.Info("⏹️  Application context cancelled, shutting down...")
 	}()
 
 	// Start hot reload monitoring
 	wg.Add(1)
 	go hotReload()
 
-	logger.Info("Application started successfully. Press Ctrl+C to stop.")
+	logger.Info("✅ Application started successfully. Press Ctrl+C to stop.")
 
 	// Wait for all goroutines to finish
 	wg.Wait()
-	logger.Info("Application stopped")
+	logger.Info("🛑 Application stopped")
 }
 
 func handleShutdown(sigChan chan os.Signal) {
 	// Wait for first signal
 	sig := <-sigChan
-	logger.Infof("Received signal: %v, initiating graceful shutdown...", sig)
+	logger.Infof("⚠️  Received signal: %v, initiating graceful shutdown...", sig)
 
 	// Cancel context immediately
 	cancel()
@@ -118,10 +121,10 @@ func handleShutdown(sigChan chan os.Signal) {
 		// Wait for second signal for immediate force shutdown
 		select {
 		case sig2 := <-sigChan:
-			logger.Warnf("Received second signal: %v, forcing immediate shutdown!", sig2)
+			logger.Warnf("🚨 Received second signal: %v, forcing immediate shutdown!", sig2)
 			forceShutdown()
 		case <-time.After(5 * time.Second):
-			logger.Warn("Graceful shutdown timeout (5s), forcing shutdown...")
+			logger.Warn("⏱️  Graceful shutdown timeout (5s), forcing shutdown...")
 			forceShutdown()
 		}
 	}()
@@ -130,7 +133,7 @@ func handleShutdown(sigChan chan os.Signal) {
 	if noAutoTune != nil && !*noAutoTune {
 		mu.RLock()
 		if tuner != nil {
-			logger.Info("Stopping auto-tuner...")
+			logger.Info("🔧 Stopping auto-tuner...")
 			tuner.Stop()
 		}
 		mu.RUnlock()
@@ -149,9 +152,9 @@ func handleShutdown(sigChan chan os.Signal) {
 
 	select {
 	case <-done:
-		logger.Info("Graceful shutdown completed")
+		logger.Info("✨ Graceful shutdown completed")
 	case <-shutdownCtx.Done():
-		logger.Warn("Shutdown timeout reached, forcing exit")
+		logger.Warn("⚡ Shutdown timeout reached, forcing exit")
 		forceShutdown()
 	}
 }
@@ -235,8 +238,13 @@ func hotReload() {
 					defer wg.Done()
 					cfg := cmd.Run(*configPath, ctx)
 
+					// If config is nil or invalid (Run logs errors internally),
+					// it means we're in API-only mode. This might be due to a bad config change.
+					// We'll let it run in API-only mode, but set a flag for potential auto-rollback
+					// if the application crashes repeatedly.
+
 					// Restart tuner if needed
-					if noAutoTune != nil && !*noAutoTune {
+					if noAutoTune != nil && !*noAutoTune && cfg != nil && cfg.Server != nil {
 						mu.Lock()
 						tuner = tuning.NewTuner(cfg, utils.NewLogger(cfg.Server.LogLevel))
 						tuner.Start(*tuneInterval)

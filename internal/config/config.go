@@ -29,14 +29,16 @@ type ServerConfig struct {
 	MaxFrameSize     int           `toml:"mux_framesize"`
 	MaxReceiveBuffer int           `toml:"mux_recievebuffer"`
 	MaxStreamBuffer  int           `toml:"mux_streambuffer"`
-	Sniffer          *bool         `toml:"sniffer"` // pointer: default true if nil
-	WebPort          int           `toml:"web_port"`
+	Sniffer          *bool         `toml:"sniffer"`  // pointer: default true if nil
+	WebPort          int           `toml:"web_port"` // Sniffer/Dashboard port
+	APIPort          int           `toml:"api_port"` // Independent API server port
 	SnifferLog       string        `toml:"sniffer_log"`
 	TLSCertFile      string        `toml:"tls_cert"`
 	TLSKeyFile       string        `toml:"tls_key"`
 	Heartbeat        int           `toml:"heartbeat"`
 	MuxCon           int           `toml:"mux_con"`
 	AcceptUDP        bool          `toml:"accept_udp"`
+	AllowedClients   []string      `toml:"allowed_clients"` // Whitelist of allowed client IPs/domains
 	ChannelSize      int           // Managed by tuner
 }
 
@@ -56,7 +58,8 @@ type ClientConfig struct {
 	MaxReceiveBuffer int           `toml:"mux_recievebuffer"`
 	MaxStreamBuffer  int           `toml:"mux_streambuffer"`
 	Sniffer          *bool         `toml:"sniffer"`
-	WebPort          int           `toml:"web_port"`
+	WebPort          int           `toml:"web_port"` // Sniffer/Dashboard port
+	APIPort          int           `toml:"api_port"` // Independent API server port
 	SnifferLog       string        `toml:"sniffer_log"`
 	DialTimeout      int           `toml:"dial_timeout"`
 	AggressivePool   bool          `toml:"aggressive_pool"`

@@ -15,10 +15,27 @@ import (
 
 // EnsureSelfSignedCert checks if certFile/keyFile exist, and if not, generates a self-signed certificate and key.
 func EnsureSelfSignedCert(certFile, keyFile, host string) error {
+	// تبدیل path‌های نسبی به absolute
+	certFile = toAbsolutePath(certFile)
+	keyFile = toAbsolutePath(keyFile)
+
 	if fileExists(certFile) && fileExists(keyFile) {
 		return nil
 	}
 	return generateSelfSignedCert(certFile, keyFile, host)
+}
+
+// toAbsolutePath تبدیل path نسبی به absolute
+func toAbsolutePath(path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	// اگر path نسبی بود، کنار executable بساز
+	execPath, err := os.Executable()
+	if err != nil {
+		return path // اگر نتوانستیم executable path رو بگیریم، از path اصلی استفاده کن
+	}
+	return filepath.Join(filepath.Dir(execPath), path)
 }
 
 func fileExists(filename string) bool {

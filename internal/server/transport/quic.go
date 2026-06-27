@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -35,21 +33,21 @@ type QuicTransport struct {
 }
 
 type QuicConfig struct {
-	BindAddr     string
-	TunnelStatus string
-	SnifferLog   string
-	Token        string
-	Ports        []string
-	Nodelay      bool
-	Sniffer      bool
-	ChannelSize  int
-	MuxCon       int
-	WebPort      int
-	KeepAlive    time.Duration
-	Heartbeat    time.Duration // in seconds
-	TLSCertFile  string        // Path to the TLS certificate file
-	TLSKeyFile   string        // Path to the TLS key file
-
+	BindAddr       string
+	TunnelStatus   string
+	SnifferLog     string
+	Token          string
+	Ports          []string
+	Nodelay        bool
+	Sniffer        bool
+	ChannelSize    int
+	MuxCon         int
+	WebPort        int
+	KeepAlive      time.Duration
+	Heartbeat      time.Duration // in seconds
+	TLSCertFile    string        // Path to the TLS certificate file
+	TLSKeyFile     string        // Path to the TLS key file
+	AllowedClients []string      // Whitelist of allowed client IPs/domains
 }
 
 func NewQuicServer(parentCtx context.Context, config *QuicConfig, logger *logrus.Logger) *QuicTransport {
@@ -215,25 +213,10 @@ func (s *QuicTransport) keepalive() {
 }
 
 func (s *QuicTransport) portConfigReader() {
-	for _, portMapping := range s.config.Ports {
-		var localAddr string
-		parts := strings.Split(portMapping, "=")
-		if len(parts) < 2 {
-			port, err := strconv.Atoi(parts[0])
-			if err != nil {
-				s.logger.Fatalf("invalid port mapping format: %s", portMapping)
-			}
-			localAddr = fmt.Sprintf(":%d", port)
-			parts = append(parts, strconv.Itoa(port))
-		} else {
-			localAddr = strings.TrimSpace(parts[0])
-			if _, err := strconv.Atoi(localAddr); err == nil {
-				localAddr = ":" + localAddr // :3080 format
-			}
-		}
-		remoteAddr := strings.TrimSpace(parts[1])
+	mapping := utils.ParsePortsToListenerConfig(s.config.Ports)
 
-		go s.localListener(localAddr, remoteAddr)
+	for laddr, cfg := range mapping {
+		go s.localListener(laddr, cfg)
 	}
 }
 
@@ -372,6 +355,13 @@ func (s *QuicTransport) acceptTunCon(listener *quic.Listener) {
 				continue
 			}
 
+			// Check if client is in whitelist
+			if !utils.IsClientAllowed(conn.RemoteAddr().String(), s.config.AllowedClients) {
+				s.logger.Warnf("client %s is not in whitelist, rejecting connection", conn.RemoteAddr().String())
+				conn.CloseWithError(0x0403, "forbidden")
+				continue
+			}
+
 			// Drop all suspicious packets from other address rather than server
 			if s.controlChannel != nil && s.controlChannel.RemoteAddr().(*net.UDPAddr).IP.String() != conn.RemoteAddr().(*net.UDPAddr).IP.String() {
 				s.logger.Debugf("suspicious packet from %v. expected address: %v. discarding packet...", conn.RemoteAddr().(*net.UDPAddr).IP.String(), s.controlChannel.RemoteAddr().(*net.UDPAddr).IP.String())
@@ -397,7 +387,7 @@ func (s *QuicTransport) acceptTunCon(listener *quic.Listener) {
 
 }
 
-func (s *QuicTransport) localListener(localAddr string, remoteAddr string) {
+func (s *QuicTransport) localListener(localAddr string, cfg utils.ListenerConfig) {
 	listener, err := net.Listen("tcp", localAddr)
 	if err != nil {
 		s.logger.Fatalf("failed to start listener on %s: %v", localAddr, err)
@@ -409,12 +399,12 @@ func (s *QuicTransport) localListener(localAddr string, remoteAddr string) {
 
 	s.logger.Infof("listener started successfully, listening on address: %s", listener.Addr().String())
 
-	go s.acceptLocalCon(listener, remoteAddr)
+	go s.acceptLocalCon(listener, cfg)
 
 	<-s.ctx.Done()
 }
 
-func (s *QuicTransport) acceptLocalCon(listener net.Listener, remoteAddr string) {
+func (s *QuicTransport) acceptLocalCon(listener net.Listener, cfg utils.ListenerConfig) {
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -447,9 +437,33 @@ func (s *QuicTransport) acceptLocalCon(listener net.Listener, remoteAddr string)
 			tcpConn.SetKeepAlive(true)
 			tcpConn.SetKeepAlivePeriod(s.config.KeepAlive)
 
+			// Attempt host-based routing using cfg
+			selected := cfg.Remotes[0]
+			if len(cfg.Remotes) > 1 {
+				// try host peek if mapping present
+				if len(cfg.HostMap) > 0 {
+					peekRes, err := utils.PeekHostFromConn(conn, 100*time.Millisecond, 4096)
+					if err == nil || err == utils.ErrNoData {
+						if peekRes.Conn != nil {
+							conn = peekRes.Conn
+						}
+						if peekRes.Host != "" {
+							if target, ok := cfg.HostMap[peekRes.Host]; ok {
+								selected = target
+								goto haveSelected
+							}
+						}
+					}
+				}
+				srcIP, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
+				dstIP, _, _ := net.SplitHostPort(listener.Addr().String())
+				selected = utils.SelectBySrcDstHash(srcIP, dstIP, cfg.Remotes)
+			}
+		haveSelected:
+
 			select {
-			case s.localChan <- LocalTCPConn{conn: conn, remoteAddr: remoteAddr}:
-				s.logger.Debugf("accepted incoming TCP connection from %s", tcpConn.RemoteAddr().String())
+			case s.localChan <- LocalTCPConn{conn: conn, remoteAddr: selected}:
+				s.logger.Debugf("accepted incoming TCP connection from %s -> %s", tcpConn.RemoteAddr().String(), selected)
 
 			default: // channel is full, discard the connection
 				s.logger.Warnf("local listener channel is full, discarding TCP connection from %s", tcpConn.LocalAddr().String())

@@ -8,7 +8,9 @@ import (
 	"html/template"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -57,6 +59,9 @@ type SystemStats struct {
 type ConfigProvider interface {
 	GetServerConfig() *config.ServerConfig
 	GetClientConfig() *config.ClientConfig
+	GetConfigFilePath() string
+	SaveConfig() error
+	SaveConfigUpdates(updates map[string]interface{}, configType string) error
 }
 
 var configProvider ConfigProvider
@@ -208,7 +213,8 @@ func (m *Usage) Monitor() {
 	if m.sniffer {
 		mux.HandleFunc("/data", m.handleData) // New route for JSON data
 	}
-	mux.HandleFunc("/config", handleConfig) // New endpoint for config
+	mux.HandleFunc("/config", handleConfig)           // GET config endpoint
+	mux.HandleFunc("/api/config", HandleConfigUpdate) // POST/PUT config update endpoint
 	m.server = &http.Server{
 		Addr:    m.listenAddr,
 		Handler: mux,
@@ -242,11 +248,62 @@ func (m *Usage) Monitor() {
 			}
 		}()
 	}
-	// Start the server
+	// Start the server with HTTPS
 	m.logger.Info("sniffer service listening on port: ", m.listenAddr)
+
+	// اگر گواهی وجود داشت، از HTTPS استفاده کن
+	// مسیر folder certs کنار executable
+	execPath, err := os.Executable()
+	certsDir := "certs" // default
+	if err == nil {
+		certsDir = filepath.Join(filepath.Dir(execPath), "certs")
+		m.logger.Debugf("[TLS] Executable path: %s", execPath)
+		m.logger.Debugf("[TLS] Certificates directory: %s", certsDir)
+	} else {
+		m.logger.Warnf("[TLS] Could not get executable path: %v", err)
+	}
+
+	certPath := filepath.Join(certsDir, "fullchain.crt")
+	keyPath := filepath.Join(certsDir, "privkey.key")
+
+	m.logger.Debugf("[TLS] Checking certificates at: certPath=%s, keyPath=%s", certPath, keyPath)
+
+	if _, err := os.Stat(certPath); err == nil {
+		if _, err := os.Stat(keyPath); err == nil {
+			// گواهی‌ها موجود هستند، از HTTPS استفاده کن
+			m.logger.Info("[TLS] Certificates found, starting HTTPS server")
+			if err := m.server.ListenAndServeTLS(certPath, keyPath); err != nil && err != http.ErrServerClosed {
+				// If we get "address already in use", it's likely the independent API is running
+				// on the same port. This is expected - just skip the monitor start.
+				if isAddressInUseError(err) {
+					m.logger.Debugf("sniffer port already in use (independent API likely running): %v", err)
+					return
+				}
+				m.logger.Errorf("sniffer server error: %v", err)
+			}
+			return
+		}
+	}
+
+	// اگر گواهی نبود، از HTTP استفاده کن
 	if err := m.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		// If we get "address already in use", it's likely the independent API is running
+		// on the same port. This is expected - just skip the monitor start.
+		if isAddressInUseError(err) {
+			m.logger.Debugf("sniffer port already in use (independent API likely running): %v", err)
+			return
+		}
 		m.logger.Errorf("sniffer server error: %v", err)
 	}
+}
+
+// isAddressInUseError checks if an error is about address already in use
+func isAddressInUseError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "address already in use") || strings.Contains(errStr, "bind: address already in use")
 }
 
 //go:embed index.html

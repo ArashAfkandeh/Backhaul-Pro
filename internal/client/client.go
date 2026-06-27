@@ -2,11 +2,9 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
+	"os"
 	"time"
 
 	"github.com/musix/backhaul/internal/utils"
@@ -18,91 +16,29 @@ import (
 
 	_ "net/http/pprof"
 
+	"github.com/BurntSushi/toml"
 	"github.com/sirupsen/logrus"
 )
 
 // Client encapsulates the client configuration and state
 type Client struct {
-	config       *config.ClientConfig
-	ctx          context.Context
-	cancel       context.CancelFunc
-	logger       *logrus.Logger
-	web          *web.Usage
-	usageMonitor *web.Usage // Added for usage monitoring
+	config         *config.ClientConfig
+	configFilePath string
+	ctx            context.Context
+	cancel         context.CancelFunc
+	logger         *logrus.Logger
+	web            *web.Usage
+	usageMonitor   *web.Usage // Added for usage monitoring
 }
 
-func extractHostFromAddr(addr string) string {
-	// Remove port if present (e.g., "1.2.3.4:8443" -> "1.2.3.4")
-	if i := strings.LastIndex(addr, ":"); i != -1 {
-		return addr[:i]
-	}
-	return addr
-}
-
-func (c *Client) syncKeepaliveWithServer(serverWebAddr string) {
-	go func() {
-		for {
-			resp, err := http.Get(serverWebAddr + "/config")
-			if err == nil {
-				var serverCfg struct {
-					Keepalive int `json:"keepalive"`
-				}
-				if err := json.NewDecoder(resp.Body).Decode(&serverCfg); err == nil {
-					if serverCfg.Keepalive > 0 && c.config.Keepalive != serverCfg.Keepalive {
-						c.logger.Infof("[SYNC] Updating client keepalive from %d to %d (server)", c.config.Keepalive, serverCfg.Keepalive)
-						c.config.Keepalive = serverCfg.Keepalive
-					}
-				}
-				resp.Body.Close()
-			}
-			time.Sleep(10 * time.Second)
-		}
-	}()
-}
-
-func (c *Client) syncConfigWithServer(serverWebAddr string) {
-	go func() {
-		for {
-			resp, err := http.Get(serverWebAddr + "/config")
-			if err == nil {
-				var serverCfg struct {
-					Keepalive        int `json:"keepalive_period"`
-					MaxFrameSize     int `json:"mux_framesize"`
-					MaxReceiveBuffer int `json:"mux_recievebuffer"`
-					MaxStreamBuffer  int `json:"mux_streambuffer"`
-				}
-				if err := json.NewDecoder(resp.Body).Decode(&serverCfg); err == nil {
-					if serverCfg.Keepalive > 0 && c.config.Keepalive != serverCfg.Keepalive {
-						c.logger.Infof("[SYNC] Updating client keepalive from %d to %d (server)", c.config.Keepalive, serverCfg.Keepalive)
-						c.config.Keepalive = serverCfg.Keepalive
-					}
-					if serverCfg.MaxFrameSize > 0 && c.config.MaxFrameSize != serverCfg.MaxFrameSize {
-						c.logger.Infof("[SYNC] Updating client MaxFrameSize from %d to %d (server)", c.config.MaxFrameSize, serverCfg.MaxFrameSize)
-						c.config.MaxFrameSize = serverCfg.MaxFrameSize
-					}
-					if serverCfg.MaxReceiveBuffer > 0 && c.config.MaxReceiveBuffer != serverCfg.MaxReceiveBuffer {
-						c.logger.Infof("[SYNC] Updating client MaxReceiveBuffer from %d to %d (server)", c.config.MaxReceiveBuffer, serverCfg.MaxReceiveBuffer)
-						c.config.MaxReceiveBuffer = serverCfg.MaxReceiveBuffer
-					}
-					if serverCfg.MaxStreamBuffer > 0 && c.config.MaxStreamBuffer != serverCfg.MaxStreamBuffer {
-						c.logger.Infof("[SYNC] Updating client MaxStreamBuffer from %d to %d (server)", c.config.MaxStreamBuffer, serverCfg.MaxStreamBuffer)
-						c.config.MaxStreamBuffer = serverCfg.MaxStreamBuffer
-					}
-				}
-				resp.Body.Close()
-			}
-			time.Sleep(10 * time.Second)
-		}
-	}()
-}
-
-func NewClient(cfg *config.ClientConfig, parentCtx context.Context) *Client {
+func NewClient(cfg *config.ClientConfig, parentCtx context.Context, configFilePath string) *Client {
 	ctx, cancel := context.WithCancel(parentCtx)
 	client := &Client{
-		config: cfg,
-		ctx:    ctx,
-		cancel: cancel,
-		logger: utils.NewLogger(cfg.LogLevel),
+		config:         cfg,
+		configFilePath: configFilePath,
+		ctx:            ctx,
+		cancel:         cancel,
+		logger:         utils.NewLogger(cfg.LogLevel),
 	}
 
 	// Initialize web panel if sniffer is enabled
@@ -134,19 +70,10 @@ func NewClient(cfg *config.ClientConfig, parentCtx context.Context) *Client {
 		}()
 	}
 
-	// Start keepalive sync with server web panel
-	if cfg.RemoteAddr != "" && cfg.WebPort > 0 {
-		host := extractHostFromAddr(cfg.RemoteAddr)
-		serverWebAddr := "http://" + host + ":" + strconv.Itoa(cfg.WebPort)
-		client.syncKeepaliveWithServer(serverWebAddr)
-	}
-
-	// Start config sync with server web panel
-	if cfg.RemoteAddr != "" && cfg.WebPort > 0 {
-		host := extractHostFromAddr(cfg.RemoteAddr)
-		serverWebAddr := "http://" + host + ":" + strconv.Itoa(cfg.WebPort)
-		client.syncConfigWithServer(serverWebAddr)
-	}
+	// NOTE: Do not sync with server's Sniffer/Dashboard
+	// Sniffer is only accessible locally on the server
+	// Client maintains its own local Sniffer instance
+	// Server sync would require exposing additional APIs or port forwarding
 
 	client.usageMonitor = usageMonitor // Add this field to Client struct if not present
 
@@ -263,7 +190,7 @@ func (c *Client) Start() {
 			ConnectionPool: c.config.ConnectionPool,
 			Token:          c.config.Token,
 			Sniffer:        sniffer,
-			WebPort:        c.config.WebPort,
+			SnifferPort:    c.config.WebPort,
 			SnifferLog:     c.config.SnifferLog,
 			AggressivePool: c.config.AggressivePool,
 		}
@@ -293,4 +220,41 @@ func (c *Client) GetServerConfig() *config.ServerConfig {
 func (c *Client) GetClientConfig() *config.ClientConfig {
 	// c.logger.Info("[TEST] GetClientConfig called, keepalive=", c.config.Keepalive)
 	return c.config
+}
+
+// GetConfigFilePath implements web.ConfigProvider interface
+func (c *Client) GetConfigFilePath() string {
+	return c.configFilePath
+}
+
+// SaveConfig implements web.ConfigProvider interface
+func (c *Client) SaveConfig() error {
+	// Marshal the full config back to TOML
+	fullConfig := &config.Config{
+		Client: c.config,
+	}
+
+	// Write to file
+	f, err := os.Create(c.configFilePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	encoder := toml.NewEncoder(f)
+	return encoder.Encode(fullConfig)
+}
+
+// SaveConfigUpdates implements web.ConfigProvider interface - updates only changed fields
+func (c *Client) SaveConfigUpdates(updates map[string]interface{}, configType string) error {
+	if configType != "client" {
+		return fmt.Errorf("client provider can only save client config updates")
+	}
+
+	for key, value := range updates {
+		if err := utils.UpdateTOMLValue(c.configFilePath, "client", key, value); err != nil {
+			return err
+		}
+	}
+	return nil
 }

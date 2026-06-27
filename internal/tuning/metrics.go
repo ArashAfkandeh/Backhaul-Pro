@@ -1,11 +1,12 @@
 package tuning
 
 import (
+	"net"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/mem"
-	"github.com/shirou/gopsutil/v4/net"
+	netstat "github.com/shirou/gopsutil/v4/net"
 )
 
 // GetCPUUsage returns the current CPU usage percentage.
@@ -31,7 +32,7 @@ func GetMemoryUsage() (float64, error) {
 
 // GetPacketLossAndThroughput returns estimated packet loss percentage and throughput (bytes/sec)
 func GetPacketLossAndThroughput() (float64, float64, error) {
-	counters, err := net.IOCounters(false)
+	counters, err := netstat.IOCounters(false)
 	if err != nil || len(counters) == 0 {
 		return 0, 0, err
 	}
@@ -39,7 +40,7 @@ func GetPacketLossAndThroughput() (float64, float64, error) {
 	// برای سادگی، یک sleep کوتاه می‌گذاریم (مثلاً 1 ثانیه)
 	first := counters[0]
 	time.Sleep(1 * time.Second)
-	counters2, err := net.IOCounters(false)
+	counters2, err := netstat.IOCounters(false)
 	if err != nil || len(counters2) == 0 {
 		return 0, 0, err
 	}
@@ -58,4 +59,24 @@ func GetPacketLossAndThroughput() (float64, float64, error) {
 		packetLoss = 0
 	}
 	return packetLoss, throughput, nil
+}
+
+// GetNetworkLatency اندازه‌گیری latency شبکه (بدون نیاز به Config)
+func GetNetworkLatency() (float64, error) {
+	// ابتدا سعی به اتصال به 8.8.8.8 (Google DNS)
+	targets := []string{"8.8.8.8:53", "1.1.1.1:53", "127.0.0.1:80"}
+
+	var latency float64
+	for _, target := range targets {
+		start := time.Now()
+		conn, err := net.DialTimeout("tcp", target, 2*time.Second)
+		if err == nil {
+			conn.Close()
+			latency = float64(time.Since(start).Milliseconds())
+			return latency, nil
+		}
+	}
+
+	// اگر اتصال توفیق نیافت، از صفر بازگردیم
+	return 0, nil
 }

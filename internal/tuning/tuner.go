@@ -2,13 +2,30 @@ package tuning
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/musix/backhaul/internal/config"
 	"github.com/sirupsen/logrus"
 )
+
+// GlobalTuner یک نمونه global از Tuner برای دسترسی متریک‌های کلاینت
+var GlobalTuner *Tuner
+
+// ClientMetrics نگهداری متریک‌های کلاینت
+type ClientMetrics struct {
+	ResourceScore int   `json:"resource_score"`
+	NetworkScore  int   `json:"network_score"`
+	Timestamp     int64 `json:"timestamp"`
+	mu            sync.RWMutex
+	lastUpdated   time.Time
+}
 
 // Tuner dynamically adjusts application parameters based on system metrics.
 type Tuner struct {
@@ -26,12 +43,15 @@ type Tuner struct {
 	latencyHistory  []float64
 	historySize     int
 	mu              sync.RWMutex
+
+	// Client metrics for hybrid tuning
+	clientMetrics *ClientMetrics
 }
 
 // NewTuner creates a new Tuner instance.
 func NewTuner(cfg *config.Config, logger *logrus.Logger) *Tuner {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Tuner{
+	tuner := &Tuner{
 		config:          cfg,
 		ctx:             ctx,
 		cancel:          cancel,
@@ -40,7 +60,15 @@ func NewTuner(cfg *config.Config, logger *logrus.Logger) *Tuner {
 		currentInterval: 10 * time.Minute,
 		latencyHistory:  make([]float64, 0, 10),
 		historySize:     10,
+		clientMetrics: &ClientMetrics{
+			ResourceScore: 50,
+			NetworkScore:  50,
+			lastUpdated:   time.Now(),
+		},
 	}
+	// Set global reference for API access
+	GlobalTuner = tuner
+	return tuner
 }
 
 // Start begins the dynamic tuning process.
@@ -91,7 +119,12 @@ func (t *Tuner) adjustParameters() {
 		t.logger.WithField("usage", memUsage).Debug("Current memory usage")
 	}
 
-	// Adjust client connection pool (for both client and server modes)
+	// دریافت متریک‌های کلاینت اگر سرور باشی
+	if t.config.Server != nil {
+		if err := t.FetchClientMetrics(); err != nil {
+			t.logger.WithError(err).Debug("[TUNER] Failed to fetch client metrics")
+		}
+	} // Adjust client connection pool (for both client and server modes)
 	if t.config.Client != nil {
 		if cpuUsage > 85.0 || memUsage > 85.0 {
 			if t.config.Client.ConnectionPool > 1 {
@@ -129,11 +162,26 @@ func (t *Tuner) adjustParameters() {
 		throughput = 0
 	}
 
-	// Adaptive adjustment factor
-	adjustDown := latency > 200 || cpuUsage > 80.0 || memUsage > 80.0 || packetLoss > 2.0
-	adjustUp := latency < 70 && cpuUsage < 60.0 && memUsage < 60.0 && packetLoss < 1.0 && throughput > 0
+	// دریافت متریک‌های کلاینت برای hybrid tuning
+	clientResourceScore, clientNetworkScore := t.GetClientMetrics()
 
-	// --- Adaptive keepalive ---
+	// Adaptive adjustment factor - بر اساس سرور و کلاینت
+	serverBad := latency > 200 || cpuUsage > 80.0 || memUsage > 80.0 || packetLoss > 2.0
+	clientBad := clientResourceScore < 40 || clientNetworkScore < 40 // اگر score کم بود، وضعیت بد است
+	adjustDown := serverBad || clientBad
+
+	serverGood := latency < 70 && cpuUsage < 60.0 && memUsage < 60.0 && packetLoss < 1.0 && throughput > 0
+	clientGood := clientResourceScore > 70 && clientNetworkScore > 70
+	adjustUp := serverGood && clientGood
+
+	t.logger.WithFields(logrus.Fields{
+		"server_cpu":            cpuUsage,
+		"server_mem":            memUsage,
+		"client_resource_score": clientResourceScore,
+		"client_network_score":  clientNetworkScore,
+		"adjust_down":           adjustDown,
+		"adjust_up":             adjustUp,
+	}).Debug("[TUNER] Hybrid tuning decision") // --- Adaptive keepalive ---
 	if err == nil {
 		minKeepalive := 10
 		maxKeepalive := 180
@@ -487,4 +535,77 @@ func (t *Tuner) checkKeepaliveSync() {
 			}).Warn("[TUNER] Keepalive desynchronization detected")
 		}
 	}
+}
+
+// FetchClientMetrics دریافت متریک‌های کلاینت از طریق HTTP
+func (t *Tuner) FetchClientMetrics() error {
+	if t.config.Client == nil {
+		return nil // سرور است، نیازی نیست
+	}
+
+	// اگر سرور نیست و کلاینت است، درخواست نمی‌کنیم
+	if t.config.Server == nil {
+		return nil
+	}
+
+	// سرور است و می‌خواهد از کلاینت درخواست کند
+	clientAddr := t.config.Client.RemoteAddr
+	if clientAddr == "" {
+		return fmt.Errorf("client address not available")
+	}
+
+	// درخواست HTTP برای دریافت health-score
+	url := fmt.Sprintf("https://%s:2060/api/health-score", clientAddr)
+
+	// ایجاد HTTP client با skip verification برای self-signed certs
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		t.logger.WithFields(logrus.Fields{
+			"client_addr": clientAddr,
+			"error":       err.Error(),
+		}).Debug("[TUNER] Failed to fetch client metrics")
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var metrics ClientMetrics
+	if err := json.NewDecoder(resp.Body).Decode(&metrics); err != nil {
+		return err
+	}
+
+	// ذخیره متریک‌ها
+	t.clientMetrics.mu.Lock()
+	t.clientMetrics.ResourceScore = metrics.ResourceScore
+	t.clientMetrics.NetworkScore = metrics.NetworkScore
+	t.clientMetrics.Timestamp = metrics.Timestamp
+	t.clientMetrics.lastUpdated = time.Now()
+	t.clientMetrics.mu.Unlock()
+
+	t.logger.WithFields(logrus.Fields{
+		"resource_score": metrics.ResourceScore,
+		"network_score":  metrics.NetworkScore,
+	}).Debug("[TUNER] Client metrics updated")
+
+	return nil
+}
+
+// GetClientMetrics دریافت متریک‌های کلاینت فعلی
+func (t *Tuner) GetClientMetrics() (resourceScore, networkScore int) {
+	t.clientMetrics.mu.RLock()
+	defer t.clientMetrics.mu.RUnlock()
+	return t.clientMetrics.ResourceScore, t.clientMetrics.NetworkScore
 }

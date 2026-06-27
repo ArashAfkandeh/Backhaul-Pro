@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -393,7 +394,12 @@ func (c *TcpMuxTransport) localDialer(stream *smux.Stream, remoteAddr string) {
 
 	localConnection, err := TcpDialer(c.ctx, resolvedAddr, c.config.DialTimeOut, c.config.KeepAlive, true, 1, 32*1024, 32*1024, c.logger)
 	if err != nil {
-		c.logger.Errorf("local dialer: %v", err)
+		// Connection refused errors are expected when service is not running, use Trace/Warn
+		if strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "Connection refused") {
+			c.logger.Tracef("local dialer: service unavailable at %s: %v", resolvedAddr, err)
+		} else {
+			c.logger.Warnf("local dialer: failed to connect to %s: %v", resolvedAddr, err)
+		}
 		stream.Close()
 		return
 	}

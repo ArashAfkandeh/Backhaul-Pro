@@ -14,7 +14,7 @@ import (
 
 const BufferSize = 16 * 1024
 
-func (s *TcpTransport) udpListener(localAddr string, remoteAddr string) {
+func (s *TcpTransport) udpListener(localAddr string, remoteAddrs []string) {
 	localUDPAddr, err := net.ResolveUDPAddr("udp", localAddr)
 	if err != nil {
 		s.logger.Fatalf("failed to resolve local address: %v", err)
@@ -89,11 +89,18 @@ func (s *TcpTransport) udpListener(localAddr string, remoteAddr string) {
 				// Generally affect the upload speed
 				payloadChan := make(chan []byte, 100_000)
 
-				// build the UDP packet
-				newUDPConn := LocalAcceptUDPConn{
-					timeCreated: time.Now().UnixNano(), // Just for debugging
-					payload:     payloadChan,
-					remoteAddr:  remoteAddr,
+// pick destination using round‑robin counter (balanced distribution)
+		selectedRemote := remoteAddrs[0]
+		if len(remoteAddrs) > 1 {
+			srcIP, _, _ := net.SplitHostPort(addr.String())
+			dstIP, _, _ := net.SplitHostPort(listener.LocalAddr().String())
+			selectedRemote = utils.SelectBySrcDstHash(srcIP, dstIP, remoteAddrs)
+		}
+		// build the UDP packet
+		newUDPConn := LocalAcceptUDPConn{
+			timeCreated: time.Now().UnixNano(), // Just for debugging
+			payload:     payloadChan,
+			remoteAddr:  selectedRemote,
 					listener:    listener,
 					clientAddr:  addr,
 					IsCongested: false,

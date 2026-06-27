@@ -35,7 +35,8 @@ type UdpConfig struct {
 	RetryInterval  time.Duration
 	DialTimeOut    time.Duration
 	ConnPoolSize   int
-	WebPort        int
+	APIPort        int // API port
+	SnifferPort    int // Sniffer port
 	Sniffer        bool
 	AggressivePool bool
 }
@@ -98,7 +99,7 @@ func (c *UdpTransport) Restart() {
 
 	// Re-initialize variables
 	c.controlChannel = nil
-	c.usageMonitor = web.NewDataStore(fmt.Sprintf(":%v", c.config.WebPort), ctx, c.config.SnifferLog, c.config.Sniffer, &c.config.TunnelStatus, c.logger)
+	c.usageMonitor = web.NewDataStore(fmt.Sprintf(":%v", c.config.SnifferPort), ctx, c.config.SnifferLog, c.config.Sniffer, &c.config.TunnelStatus, c.logger)
 	c.config.TunnelStatus = ""
 	c.poolConnections = 0
 	c.loadConnections = 0

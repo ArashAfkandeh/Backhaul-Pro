@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,15 +30,16 @@ type UdpTransport struct {
 }
 
 type UdpConfig struct {
-	BindAddr     string
-	Token        string
-	SnifferLog   string
-	TunnelStatus string
-	Ports        []string
-	Sniffer      bool
-	Heartbeat    time.Duration // in seconds, for udp conn and control channel
-	ChannelSize  int
-	WebPort      int
+	BindAddr       string
+	Token          string
+	SnifferLog     string
+	TunnelStatus   string
+	Ports          []string
+	Sniffer        bool
+	Heartbeat      time.Duration // in seconds, for udp conn and control channel
+	ChannelSize    int
+	WebPort        int
+	AllowedClients []string // Whitelist of allowed client IPs/domains
 }
 
 func NewUDPServer(parentCtx context.Context, config *UdpConfig, logger *logrus.Logger) *UdpTransport {
@@ -268,12 +268,12 @@ func (s *UdpTransport) channelHandler() {
 				return
 			}
 
-			if message == utils.SG_Closed {
+			switch message {
+			case utils.SG_Closed:
 				s.logger.Warn("control channel has been closed by the client")
 				go s.Restart()
 				return
-
-			} else if message == utils.SG_RTT {
+			case utils.SG_RTT:
 				measureRTT := time.Since(rtt)
 				s.rtt = measureRTT.Milliseconds()
 				s.logger.Infof("Round Trip Time (RTT): %d ms", s.rtt)
@@ -319,6 +319,12 @@ func (s *UdpTransport) acceptTunnelConn(listener *net.UDPConn) {
 
 			// Create a unique identifier for the connection based on IP and port
 			key := addr.String()
+
+			// Check if client is in whitelist
+			if !utils.IsClientAllowed(addr.String(), s.config.AllowedClients) {
+				s.logger.Warnf("client %s is not in whitelist, rejecting UDP connection", addr.String())
+				continue
+			}
 
 			s.activeMu.Lock()
 			// Check if the connection is already active
@@ -376,105 +382,28 @@ func (s *UdpTransport) acceptTunnelConn(listener *net.UDPConn) {
 }
 
 func (s *UdpTransport) parsePortMappings() {
-	for _, portMapping := range s.config.Ports {
-		parts := strings.Split(portMapping, "=")
+	mapping := utils.ParsePortsToListenerConfig(s.config.Ports)
 
-		var localAddr, remoteAddr string
-
-		// Check if only a single port or a port range is provided (no "=" present)
-		if len(parts) == 1 {
-			localPortOrRange := strings.TrimSpace(parts[0])
-			remoteAddr = localPortOrRange // If no remote addr is provided, use the local port as the remote port
-
-			// Check if it's a port range
-			if strings.Contains(localPortOrRange, "-") {
-				rangeParts := strings.Split(localPortOrRange, "-")
-				if len(rangeParts) != 2 {
-					s.logger.Fatalf("invalid port range format: %s", localPortOrRange)
-				}
-
-				// Parse and validate start and end ports
-				startPort, err := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
-				if err != nil || startPort < 1 || startPort > 65535 {
-					s.logger.Fatalf("invalid start port in range: %s", rangeParts[0])
-				}
-
-				endPort, err := strconv.Atoi(strings.TrimSpace(rangeParts[1]))
-				if err != nil || endPort < 1 || endPort > 65535 || endPort < startPort {
-					s.logger.Fatalf("invalid end port in range: %s", rangeParts[1])
-				}
-
-				// Create listeners for all ports in the range
-				for port := startPort; port <= endPort; port++ {
-					localAddr = fmt.Sprintf(":%d", port)
-					go s.localListener(localAddr, strconv.Itoa(port)) // Use port as the remoteAddr
-					time.Sleep(1 * time.Millisecond)                  // for wide port ranges
-				}
-				continue
-			} else {
-				// Handle single port case
-				port, err := strconv.Atoi(localPortOrRange)
-				if err != nil || port < 1 || port > 65535 {
-					s.logger.Fatalf("invalid port format: %s", localPortOrRange)
-				}
-				localAddr = fmt.Sprintf(":%d", port)
-			}
-		} else if len(parts) == 2 {
-			// Handle "local=remote" format
-			localPortOrRange := strings.TrimSpace(parts[0])
-			remoteAddr = strings.TrimSpace(parts[1])
-
-			// Check if local port is a range
-			if strings.Contains(localPortOrRange, "-") {
-				rangeParts := strings.Split(localPortOrRange, "-")
-				if len(rangeParts) != 2 {
-					s.logger.Fatalf("invalid port range format: %s", localPortOrRange)
-				}
-
-				// Parse and validate start and end ports
-				startPort, err := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
-				if err != nil || startPort < 1 || startPort > 65535 {
-					s.logger.Fatalf("invalid start port in range: %s", rangeParts[0])
-				}
-
-				endPort, err := strconv.Atoi(strings.TrimSpace(rangeParts[1]))
-				if err != nil || endPort < 1 || endPort > 65535 || endPort < startPort {
-					s.logger.Fatalf("invalid end port in range: %s", rangeParts[1])
-				}
-
-				// Create listeners for all ports in the range
-				for port := startPort; port <= endPort; port++ {
-					localAddr = fmt.Sprintf(":%d", port)
-					go s.localListener(localAddr, remoteAddr)
-					time.Sleep(1 * time.Millisecond) // for wide port ranges
-				}
-				continue
-			} else {
-				// Handle single local port case
-				port, err := strconv.Atoi(localPortOrRange)
-				if err == nil && port > 1 && port < 65535 { // format port=remoteAddress
-					localAddr = fmt.Sprintf(":%d", port)
-				} else {
-					localAddr = localPortOrRange // format ip:port=remoteAddress
-				}
-			}
-		} else {
-			s.logger.Fatalf("invalid port mapping format: %s", portMapping)
-		}
-		// Start listeners for single port
-		go s.localListener(localAddr, remoteAddr)
+	for laddr, cfg := range mapping {
+		go s.localListener(laddr, cfg.Remotes)
 	}
 }
 
-func (s *UdpTransport) localListener(localAddr, remoteAddr string) {
+func (s *UdpTransport) localListener(localAddr string, remoteAddrs []string) {
 	localUDPAddr, err := net.ResolveUDPAddr("udp", localAddr)
 	if err != nil {
-		s.logger.Fatalf("failed to resolve local address: %v", err)
+		s.logger.Warnf("failed to resolve local address: %v", err)
+		return
 	}
 
 	listener, err := net.ListenUDP("udp", localUDPAddr)
 	if err != nil {
-		s.logger.Fatalf("failed to listen on local UDP port: %v", err)
+		if strings.Contains(err.Error(), "address already in use") {
+			s.logger.Fatalf("failed to listen on local UDP port: %v", err)
+		} else {
+			s.logger.Warnf("failed to listen on local UDP port (remote service may be unavailable): %v", err)
+		}
+		return
 	}
 
 	defer listener.Close()
@@ -531,10 +460,17 @@ func (s *UdpTransport) localListener(localAddr, remoteAddr string) {
 				payloadChan := make(chan []byte, 100_000)
 
 				// Build the UDP connection object
+				// select a remote address using source+destination hash
+				selected := remoteAddrs[0]
+				if len(remoteAddrs) > 1 {
+					srcIP, _, _ := net.SplitHostPort(addr.String())
+					dstIP, _, _ := net.SplitHostPort(listener.LocalAddr().String())
+					selected = utils.SelectBySrcDstHash(srcIP, dstIP, remoteAddrs)
+				}
 				newUDPConn := LocalUDPConn{
-					timeCreated: time.Now().UnixMilli(), // Just for debugging
+					timeCreated: time.Now().UnixNano(), // Just for debugging
 					payload:     payloadChan,
-					remoteAddr:  remoteAddr,
+					remoteAddr:  selected,
 					listener:    listener,
 					addr:        addr,
 				}

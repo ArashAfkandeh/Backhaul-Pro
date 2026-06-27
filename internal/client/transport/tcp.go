@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,7 +28,15 @@ type TcpTransport struct {
 	poolConnections int32
 	loadConnections int32
 	controlFlow     chan struct{}
+	localChannel    chan LocalTCPConn
+	tunnelChannel   chan net.Conn
 }
+type LocalTCPConn struct {
+	conn        net.Conn
+	remoteAddr  string
+	timeCreated int64
+}
+
 type TcpConfig struct {
 	RemoteAddr     string
 	Token          string
@@ -41,6 +50,9 @@ type TcpConfig struct {
 	Nodelay        bool
 	Sniffer        bool
 	AggressivePool bool
+	TunnelMode     string
+	Ports          []string
+	AcceptUDP      bool
 }
 
 func NewTCPClient(parentCtx context.Context, config *TcpConfig, logger *logrus.Logger, usageMonitor *web.Usage) *TcpTransport {
@@ -59,6 +71,8 @@ func NewTCPClient(parentCtx context.Context, config *TcpConfig, logger *logrus.L
 		poolConnections: 0,
 		loadConnections: 0,
 		controlFlow:     make(chan struct{}, 100),
+		localChannel:    make(chan LocalTCPConn, 4096),
+		tunnelChannel:   make(chan net.Conn, config.ConnPoolSize*2),
 	}
 
 	return client
@@ -67,6 +81,10 @@ func NewTCPClient(parentCtx context.Context, config *TcpConfig, logger *logrus.L
 func (c *TcpTransport) Start() {
 	// Do NOT start usageMonitor.Monitor here!
 	c.config.TunnelStatus = "Disconnected (TCP)"
+
+	if c.config.TunnelMode == "direct" {
+		go c.parsePortMappings()
+	}
 
 	go c.channelDialer()
 }
@@ -105,6 +123,8 @@ func (c *TcpTransport) Restart() {
 	c.poolConnections = 0
 	c.loadConnections = 0
 	c.controlFlow = make(chan struct{}, 100)
+	c.localChannel = make(chan LocalTCPConn, 4096)
+	c.tunnelChannel = make(chan net.Conn, c.config.ConnPoolSize*2)
 
 	// set the log level again
 	c.logger.SetLevel(level)
@@ -163,6 +183,18 @@ func (c *TcpTransport) channelDialer() {
 				c.logger.Info("control channel established successfully")
 
 				c.config.TunnelStatus = "Connected (TCP)"
+
+				if c.config.TunnelMode == "direct" {
+					numCPU := runtime.NumCPU()
+					if numCPU > 4 {
+						numCPU = 4
+					}
+					c.logger.Infof("starting %d direct handle loops on each CPU thread", numCPU)
+					for i := 0; i < numCPU; i++ {
+						go c.handleLoopDirect()
+					}
+				}
+
 				go c.poolMaintainer()
 				go c.channelHandler()
 
@@ -337,6 +369,17 @@ func (c *TcpTransport) tunnelDialer() {
 
 	// Increment active connections counter
 	atomic.AddInt32(&c.poolConnections, 1)
+
+	if c.config.TunnelMode == "direct" {
+		select {
+		case c.tunnelChannel <- tcpConn:
+		default:
+			c.logger.Debugf("tunnel listener channel is full, discarding TCP connection")
+			tcpConn.Close()
+			atomic.AddInt32(&c.poolConnections, -1)
+		}
+		return
+	}
 
 	// Attempt to receive the remote address from the tunnel server
 	remoteAddr, transport, err := utils.ReceiveBinaryTransportString(tcpConn)

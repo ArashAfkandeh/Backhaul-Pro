@@ -41,6 +41,10 @@ func NewClient(cfg *config.ClientConfig, parentCtx context.Context, configFilePa
 		logger:         utils.NewLogger(cfg.LogLevel),
 	}
 
+	if cfg.ConnectionPool < 1 {
+		cfg.ConnectionPool = 8
+	}
+
 	// Initialize web panel if sniffer is enabled
 	sniffer := true
 	if cfg.Sniffer != nil {
@@ -113,6 +117,9 @@ func (c *Client) Start() {
 			WebPort:        c.config.WebPort,
 			SnifferLog:     c.config.SnifferLog,
 			AggressivePool: c.config.AggressivePool,
+			TunnelMode:     c.config.TunnelMode,
+			Ports:          c.config.Ports,
+			AcceptUDP:      c.config.AcceptUDP,
 		}
 		tcpClient := transport.NewTCPClient(c.ctx, tcpConfig, c.logger, usageMonitor)
 		go tcpClient.Start()

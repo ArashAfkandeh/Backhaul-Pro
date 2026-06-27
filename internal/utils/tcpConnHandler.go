@@ -28,6 +28,30 @@ func transferData(from net.Conn, to net.Conn, logger *logrus.Logger, usage *web.
 	for {
 		// Read data from the source connection
 		r, err := from.Read(buf)
+		if r > 0 {
+			totalWritten := 0
+			for totalWritten < r {
+				// Write data to the destination connection
+				w, writeErr := to.Write(buf[totalWritten:r])
+				if writeErr != nil {
+					if errors.Is(writeErr, net.ErrClosed) {
+						logger.Trace("writer stream closed or EOF received")
+					} else {
+						logger.Trace("unable to write to the connection: ", writeErr)
+					}
+					from.Close()
+					to.Close()
+					return
+				}
+				totalWritten += w
+			}
+
+			logger.Tracef("read data: %d bytes, written data: %d bytes", r, totalWritten)
+			if sniffer {
+				usage.AddOrUpdatePort(remotePort, uint64(totalWritten))
+			}
+		}
+
 		if err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 				logger.Trace("reader stream closed or EOF received")
@@ -37,29 +61,6 @@ func transferData(from net.Conn, to net.Conn, logger *logrus.Logger, usage *web.
 			from.Close()
 			to.Close()
 			return
-		}
-
-		totalWritten := 0
-		for totalWritten < r {
-			// Write data to the destination connection
-			w, err := to.Write(buf[totalWritten:r])
-			if err != nil {
-				if errors.Is(err, net.ErrClosed) {
-					logger.Trace("writer stream closed or EOF received")
-				} else {
-					logger.Trace("unable to write to the connection: ", err)
-				}
-				from.Close()
-				to.Close()
-				return
-
-			}
-			totalWritten += w
-		}
-
-		logger.Tracef("read data: %d bytes, written data: %d bytes", r, totalWritten)
-		if sniffer {
-			usage.AddOrUpdatePort(remotePort, uint64(totalWritten))
 		}
 	}
 

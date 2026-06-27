@@ -22,6 +22,7 @@ type ServerConfig struct {
 	Nodelay          bool          `toml:"nodelay"`
 	Keepalive        int           `toml:"keepalive_period"`
 	LogLevel         string        `toml:"log_level"`
+	TunnelMode       string        `toml:"tunnel_mode"` // "reverse" or "direct"
 	Ports            []string      `toml:"ports"`
 	PPROF            bool          `toml:"pprof"`
 	MuxSession       int           `toml:"mux_session"`
@@ -51,6 +52,9 @@ type ClientConfig struct {
 	Nodelay          bool          `toml:"nodelay"`
 	Keepalive        int           `toml:"keepalive_period"`
 	LogLevel         string        `toml:"log_level"`
+	TunnelMode       string        `toml:"tunnel_mode"` // "reverse" or "direct"
+	Ports            []string      `toml:"ports"`
+	AcceptUDP        bool          `toml:"accept_udp"`
 	PPROF            bool          `toml:"pprof"`
 	MuxSession       int           `toml:"mux_session"`
 	MuxVersion       int           `toml:"mux_version"`

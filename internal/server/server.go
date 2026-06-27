@@ -74,6 +74,11 @@ func (s *Server) SaveConfigUpdates(updates map[string]interface{}, configType st
 
 func NewServer(cfg *config.ServerConfig, parentCtx context.Context, configFilePath string) *Server {
 	ctx, cancel := context.WithCancel(parentCtx)
+
+	if cfg.ChannelSize < 1 {
+		cfg.ChannelSize = 8
+	}
+
 	return &Server{
 		config:         cfg,
 		configFilePath: configFilePath,
@@ -107,6 +112,7 @@ func (s *Server) Start() {
 			Sniffer:        *s.config.Sniffer,
 			WebPort:        s.config.WebPort,
 			SnifferLog:     s.config.SnifferLog,
+			TunnelMode:     s.config.TunnelMode,
 			AcceptUDP:      s.config.AcceptUDP,
 			AllowedClients: s.config.AllowedClients,
 		}
